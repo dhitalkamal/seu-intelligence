@@ -53,12 +53,7 @@ class CalculateHealthScoreUseCase:
         """
         fill_rate = Decimal(registered_count) / Decimal(capacity) if capacity > 0 else Decimal("0")
 
-        raw = (
-            float(fill_rate) * 40
-            + float(conversion_rate) * 30
-            + float(registration_velocity) * 20
-            + float(revenue_progress) * 10
-        )
+        raw = float(fill_rate) * 40 + float(conversion_rate) * 30 + float(registration_velocity) * 20 + float(revenue_progress) * 10
         score = _clamp(raw)
         level = _classify_level(score)
 

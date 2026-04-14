@@ -14,24 +14,18 @@ class IngestEventSerializer(serializers.Serializer):
     source_service = serializers.CharField(max_length=50)
     occurred_at = serializers.DateTimeField()
     event_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    organisation_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    organization_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     user_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    value = serializers.DecimalField(
-        max_digits=12, decimal_places=2, required=False, allow_null=True, default=None
-    )
+    value = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True, default=None)
     payload = serializers.JSONField(required=False, default=dict)
 
 
 class HealthScoreInputSerializer(serializers.Serializer):
     """Payload for calculating an event health score."""
 
-    registration_velocity = serializers.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0")
-    )
+    registration_velocity = serializers.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
     conversion_rate = serializers.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
-    revenue_progress = serializers.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0")
-    )
+    revenue_progress = serializers.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
     capacity = serializers.IntegerField(min_value=0)
     registered_count = serializers.IntegerField(min_value=0)
 
@@ -50,3 +44,15 @@ class HealthScoreResponseSerializer(serializers.Serializer):
     risk_flags = serializers.ListField(child=serializers.CharField())
     recommendations = serializers.ListField(child=serializers.CharField())
     calculated_at = serializers.DateTimeField()
+
+
+class HealthPingResponseSerializer(serializers.Serializer):
+    """Public shape of a health ping record."""
+
+    id = serializers.UUIDField()
+    service_name = serializers.CharField()
+    service_type = serializers.CharField()
+    status = serializers.CharField()
+    latency_ms = serializers.IntegerField()
+    details = serializers.DictField()
+    checked_at = serializers.DateTimeField()

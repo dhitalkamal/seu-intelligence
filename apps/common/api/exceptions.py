@@ -110,9 +110,7 @@ def api_exception_handler(exc: Exception, context: dict) -> Response | None:
         )
     if http_status == status.HTTP_429_TOO_MANY_REQUESTS:
         return Response(
-            _body(
-                "ERR_RATE_LIMIT_EXCEEDED", _extract(data, "Request was throttled."), None, request
-            ),
+            _body("ERR_RATE_LIMIT_EXCEEDED", _extract(data, "Request was throttled."), None, request),
             status=429,
         )
     return Response(

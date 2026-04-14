@@ -1,4 +1,5 @@
 """WSGI entry point for the intelligence-service."""
+
 from __future__ import annotations
 
 import os

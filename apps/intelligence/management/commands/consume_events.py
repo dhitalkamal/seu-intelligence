@@ -66,16 +66,42 @@ class Command(BaseCommand):
                 source_service=routing_key.split(".")[0],
                 occurred_at=datetime.now(timezone.utc),
                 event_id=_safe_uuid(payload.get("event_id")),
-                organisation_id=_safe_uuid(payload.get("organisation_id")),
+                organization_id=_safe_uuid(payload.get("organization_id")),
                 user_id=_safe_uuid(payload.get("user_id")),
                 value=None,
                 payload=payload,
             )
+
+            # sync networking opt-in preference to ConnectionPrivacy
+            if routing_key == "participation.registration.created":
+                _sync_networking_opt_in(payload)
+
             channel.basic_ack(delivery_tag=method.delivery_tag)
             logger.debug("Ingested analytics event: %s", routing_key)
         except Exception:
             logger.exception("Intelligence consumer failed to ingest event.")
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+
+def _sync_networking_opt_in(payload: dict) -> None:
+    """Create or update the ConnectionPrivacy record from a registration event."""
+    user_id = _safe_uuid(payload.get("user_id"))
+    event_id = _safe_uuid(payload.get("event_id"))
+    opt_in = payload.get("networking_opt_in", False)
+    if not user_id or not event_id:
+        return
+    try:
+        from apps.intelligence.application.use_cases.update_privacy import UpdatePrivacyUseCase
+        from apps.intelligence.infrastructure.repositories import DjangoConnectionPrivacyRepository
+
+        UpdatePrivacyUseCase(DjangoConnectionPrivacyRepository()).execute(
+            user_id=user_id,
+            event_id=event_id,
+            opted_in=bool(opt_in),
+        )
+        logger.debug("Synced networking opt-in for user %s event %s: %s", user_id, event_id, opt_in)
+    except Exception:
+        logger.exception("Failed to sync networking opt-in.")
 
 
 def _safe_uuid(value: object) -> uuid.UUID | None:

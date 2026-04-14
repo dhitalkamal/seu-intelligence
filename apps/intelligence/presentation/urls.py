@@ -9,6 +9,8 @@ from .views import (
     ConnectionPrivacyView,
     ConnectionsView,
     HealthCheckView,
+    HealthHistoryLatestView,
+    HealthHistoryView,
     HealthScoreView,
     IngestView,
     IntroductionView,
@@ -52,4 +54,7 @@ urlpatterns: list[URLPattern] = [
     path("nlp/language/detect", NLPLanguageDetectionView.as_view(), name="nlp-language"),
     path("nlp/similarity/score", NLPSimilarityView.as_view(), name="nlp-similarity"),
     path("nlp/chat/", ChatbotView.as_view(), name="nlp-chat"),
+    # health ping history (superadmin dashboard)
+    path("health-history/", HealthHistoryView.as_view(), name="health-history"),
+    path("health-history/latest/", HealthHistoryLatestView.as_view(), name="health-history-latest"),
 ]

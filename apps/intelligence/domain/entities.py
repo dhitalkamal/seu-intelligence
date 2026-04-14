@@ -18,7 +18,7 @@ class AnalyticsEventEntity:
     occurred_at: datetime
     created_at: datetime
     event_id: uuid.UUID | None = None
-    organisation_id: uuid.UUID | None = None
+    organization_id: uuid.UUID | None = None
     user_id: uuid.UUID | None = None
     value: Decimal | None = None
     payload: dict = field(default_factory=dict)
@@ -65,3 +65,16 @@ class HealthScoreEntity:
     predicted_attendance: int = 0
     risk_flags: list = field(default_factory=list)
     recommendations: list = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class HealthPingEntity:
+    """A single health check result for a service or infra dependency."""
+
+    id: uuid.UUID
+    service_name: str
+    service_type: str
+    status: str
+    latency_ms: int
+    checked_at: datetime
+    details: dict = field(default_factory=dict)

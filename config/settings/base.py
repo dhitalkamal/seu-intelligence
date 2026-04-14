@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "corsheaders",
     "drf_spectacular",
+    "django_celery_beat",
     "apps.intelligence",
 ]
 
@@ -116,6 +117,21 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": REDIS_URL,
     }
+}
+
+# * celery
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TASK_DEFAULT_QUEUE = "intelligence"
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+CELERY_BEAT_SCHEDULE = {
+    "ping-all-services": {
+        "task": "intelligence.ping_all_services",
+        "schedule": 300.0,
+    },
 }
 
 SPECTACULAR_SETTINGS = {

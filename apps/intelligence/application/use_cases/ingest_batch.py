@@ -34,7 +34,7 @@ class IngestBatchUseCase:
                 occurred_at=e["occurred_at"],
                 created_at=now,
                 event_id=e.get("event_id"),
-                organisation_id=e.get("organisation_id"),
+                organization_id=e.get("organization_id"),
                 user_id=e.get("user_id"),
                 value=e.get("value"),
                 payload=e.get("payload", {}),

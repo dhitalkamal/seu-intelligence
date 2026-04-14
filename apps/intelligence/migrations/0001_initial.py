@@ -26,7 +26,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("event_id", models.UUIDField(blank=True, null=True)),
-                ("organisation_id", models.UUIDField(blank=True, null=True)),
+                ("organization_id", models.UUIDField(blank=True, null=True)),
                 ("user_id", models.UUIDField(blank=True, null=True)),
                 ("event_type", models.CharField(max_length=50)),
                 (
@@ -50,7 +50,7 @@ class Migration(migrations.Migration):
         migrations.AddIndex(
             model_name="analyticsevent",
             index=models.Index(
-                fields=["organisation_id", "-occurred_at"],
+                fields=["organization_id", "-occurred_at"],
                 name="idx_analytics_org",
             ),
         ),

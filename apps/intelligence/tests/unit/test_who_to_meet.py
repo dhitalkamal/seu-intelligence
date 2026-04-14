@@ -41,22 +41,13 @@ class FakeMatchRepo:
         self._store: dict[uuid.UUID, AttendeeMatchEntity] = {}
         self._users_by_event: dict[uuid.UUID, list[uuid.UUID]] = {}
 
-    def get_matches_for_user(
-        self, event_id: uuid.UUID, user_id: uuid.UUID
-    ) -> list[AttendeeMatchEntity]:
-        return [
-            m
-            for m in self._store.values()
-            if m.event_id == event_id and (m.user_id_a == user_id or m.user_id_b == user_id)
-        ]
+    def get_matches_for_user(self, event_id: uuid.UUID, user_id: uuid.UUID) -> list[AttendeeMatchEntity]:
+        return [m for m in self._store.values() if m.event_id == event_id and (m.user_id_a == user_id or m.user_id_b == user_id)]
 
-    def get_pair(
-        self, event_id: uuid.UUID, user_id_a: uuid.UUID, user_id_b: uuid.UUID
-    ) -> AttendeeMatchEntity | None:
+    def get_pair(self, event_id: uuid.UUID, user_id_a: uuid.UUID, user_id_b: uuid.UUID) -> AttendeeMatchEntity | None:
         for m in self._store.values():
             if m.event_id == event_id and (
-                (m.user_id_a == user_id_a and m.user_id_b == user_id_b)
-                or (m.user_id_a == user_id_b and m.user_id_b == user_id_a)
+                (m.user_id_a == user_id_a and m.user_id_b == user_id_b) or (m.user_id_a == user_id_b and m.user_id_b == user_id_a)
             ):
                 return m
         return None
@@ -193,9 +184,7 @@ def test_send_introduction_requires_opt_in_for_target():
     match_repo.bulk_create([m])
 
     with pytest.raises(OptInRequiredError):
-        SendIntroductionUseCase(match_repo, privacy_repo).execute(
-            event_id=event_id, requesting_user_id=user_id, target_user_id=other_id
-        )
+        SendIntroductionUseCase(match_repo, privacy_repo).execute(event_id=event_id, requesting_user_id=user_id, target_user_id=other_id)
 
 
 def test_update_privacy_settings_opt_in():
@@ -206,9 +195,7 @@ def test_update_privacy_settings_opt_in():
     event_id = uuid.uuid4()
     privacy_repo = FakePrivacyRepo()
 
-    result = UpdatePrivacyUseCase(privacy_repo).execute(
-        user_id=user_id, event_id=event_id, opted_in=True
-    )
+    result = UpdatePrivacyUseCase(privacy_repo).execute(user_id=user_id, event_id=event_id, opted_in=True)
     assert result.opted_in is True
 
 
