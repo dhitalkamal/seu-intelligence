@@ -24,3 +24,17 @@ class MatchNotFoundError(DomainError):
 
     http_status = 404
     code = "ERR_MATCH_NOT_FOUND"
+
+
+class ReportJobNotFoundError(DomainError):
+    """Raised when a report job record cannot be found."""
+
+    http_status = 404
+    code = "ERR_REPORT_JOB_NOT_FOUND"
+
+
+class ReportJobNotCompletedError(DomainError):
+    """Raised when a download is requested for a job that has not completed."""
+
+    http_status = 409
+    code = "ERR_REPORT_JOB_NOT_COMPLETED"

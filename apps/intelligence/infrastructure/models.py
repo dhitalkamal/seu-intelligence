@@ -13,6 +13,7 @@ from apps.intelligence.domain.entities import (
     ConnectionPrivacyEntity,
     HealthPingEntity,
     HealthScoreEntity,
+    ReportJobEntity,
 )
 
 
@@ -262,4 +263,52 @@ class HealthPing(models.Model):
             latency_ms=entity.latency_ms,
             details=entity.details,
             checked_at=entity.checked_at,
+        )
+
+
+class ReportJob(models.Model):
+    """Async report generation job record."""
+
+    class Meta:
+        db_table = '"intelligence"."report_job"'
+        indexes = [
+            models.Index(fields=["requested_by", "-created_at"], name="idx_report_job_user"),
+        ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    requested_by = models.UUIDField()
+    report_type = models.CharField(max_length=50)
+    filters = models.JSONField(default=dict)
+    format = models.CharField(max_length=10)
+    status = models.CharField(max_length=20, default="pending")
+    file_url = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    def to_entity(self) -> ReportJobEntity:
+        """Map this ORM row to a pure-Python ReportJobEntity."""
+        return ReportJobEntity(
+            id=self.id,
+            requested_by=self.requested_by,
+            report_type=self.report_type,
+            filters=self.filters,
+            format=self.format,
+            status=self.status,
+            file_url=self.file_url,
+            created_at=self.created_at,
+            completed_at=self.completed_at,
+        )
+
+    @classmethod
+    def from_entity(cls, entity: ReportJobEntity) -> "ReportJob":
+        """Build an unsaved ORM instance from a ReportJobEntity."""
+        return cls(
+            id=entity.id,
+            requested_by=entity.requested_by,
+            report_type=entity.report_type,
+            filters=entity.filters,
+            format=entity.format,
+            status=entity.status,
+            file_url=entity.file_url,
+            completed_at=entity.completed_at,
         )

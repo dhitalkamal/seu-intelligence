@@ -112,6 +112,13 @@ CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="", cast=Csv())
 REDIS_URL = config("REDIS_URL", default="redis://localhost:6379/0")
 RABBITMQ_URL = config("RABBITMQ_URL", default="amqp://guest:guest@localhost:5672/")
 
+# * minio / s3 storage
+MINIO_ENDPOINT = config("MINIO_ENDPOINT", default="minio:9000")
+MINIO_ACCESS_KEY = config("MINIO_ACCESS_KEY", default="sansaar")
+MINIO_SECRET_KEY = config("MINIO_SECRET_KEY", default="sansaar_secret")
+MINIO_BUCKET = config("MINIO_BUCKET", default="sansaar-reports")
+MINIO_SECURE = config("MINIO_SECURE", default=False, cast=bool)
+
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",

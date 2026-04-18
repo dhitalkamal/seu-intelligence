@@ -16,16 +16,19 @@ from rest_framework.views import APIView
 from apps.common.api.responses import created_response, error_response, success_response
 from apps.common.health import check_database, check_rabbitmq, check_redis
 from apps.intelligence.application.use_cases.calculate_health import CalculateHealthScoreUseCase
+from apps.intelligence.application.use_cases.generate_report import GenerateReportUseCase
 from apps.intelligence.application.use_cases.get_connections import GetConnectionsUseCase
 from apps.intelligence.application.use_cases.get_health import GetLatestHealthScoreUseCase
 from apps.intelligence.application.use_cases.get_health_history import GetHealthHistoryUseCase, GetLatestHealthRoundUseCase
 from apps.intelligence.application.use_cases.get_privacy import GetPrivacyUseCase
+from apps.intelligence.application.use_cases.get_report_download_url import GetReportDownloadUrlUseCase
 from apps.intelligence.application.use_cases.ingest_batch import IngestBatchUseCase
 from apps.intelligence.application.use_cases.ingest_event import IngestEventUseCase
+from apps.intelligence.application.use_cases.poll_report_job import PollReportJobUseCase
 from apps.intelligence.application.use_cases.send_introduction import SendIntroductionUseCase
 from apps.intelligence.application.use_cases.tokenize import tokenize_query
 from apps.intelligence.application.use_cases.update_privacy import UpdatePrivacyUseCase
-from apps.intelligence.domain.exceptions import MatchNotFoundError, OptInRequiredError
+from apps.intelligence.domain.exceptions import MatchNotFoundError, OptInRequiredError, ReportJobNotCompletedError, ReportJobNotFoundError
 from apps.intelligence.infrastructure.repositories import (
     DjangoAnalyticsEventQueryRepository,
     DjangoAnalyticsEventRepository,
@@ -33,12 +36,15 @@ from apps.intelligence.infrastructure.repositories import (
     DjangoConnectionPrivacyRepository,
     DjangoHealthPingRepository,
     DjangoHealthScoreRepository,
+    DjangoReportJobRepository,
 )
 from apps.intelligence.presentation.serializers import (
+    GenerateReportInputSerializer,
     HealthPingResponseSerializer,
     HealthScoreInputSerializer,
     HealthScoreResponseSerializer,
     IngestEventSerializer,
+    ReportJobResponseSerializer,
 )
 
 _IS_AUTH = IsAuthenticated
@@ -64,6 +70,12 @@ _PING_REPO = DjangoHealthPingRepository
 _PING_HISTORY_UC = GetHealthHistoryUseCase
 _PING_LATEST_UC = GetLatestHealthRoundUseCase
 _PING_RESP_SER = HealthPingResponseSerializer
+_REPORT_REPO = DjangoReportJobRepository
+_GENERATE_REPORT_UC = GenerateReportUseCase
+_POLL_REPORT_UC = PollReportJobUseCase
+_DOWNLOAD_REPORT_UC = GetReportDownloadUrlUseCase
+_GENERATE_REPORT_SER = GenerateReportInputSerializer
+_REPORT_JOB_SER = ReportJobResponseSerializer
 
 _CHECKS = inline_serializer(
     name="DependencyChecks",
@@ -946,3 +958,87 @@ class HealthHistoryLatestView(APIView):
         """Return the most recent ping for every service."""
         pings = _PING_LATEST_UC(_PING_REPO()).execute()
         return success_response(_PING_RESP_SER(pings, many=True).data, request=request)
+
+
+class GenerateReportView(APIView):
+    """POST /reports/ - create a new async report job."""
+
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Reports"],
+        summary="Request a new report",
+        description="Creates a pending report job and dispatches the generation task asynchronously.",
+        request=GenerateReportInputSerializer,
+        responses={
+            201: OpenApiResponse(description="Report job created.", response=ReportJobResponseSerializer),
+            400: OpenApiResponse(description="Invalid input."),
+        },
+    )
+    def post(self, request: Request) -> Response:
+        """Validate the request, create a report job, and dispatch the task."""
+        ser = _GENERATE_REPORT_SER(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        def _dispatch(job_id: _UUID) -> None:
+            from apps.intelligence.tasks import generate_report_task
+
+            generate_report_task.delay(str(job_id))
+
+        job = _GENERATE_REPORT_UC(_REPORT_REPO(), dispatch_task=_dispatch).execute(
+            requested_by=request.user.id,
+            report_type=ser.validated_data["report_type"],
+            filters=ser.validated_data["filters"],
+            format=ser.validated_data["format"],
+        )
+        return _CREATED(_REPORT_JOB_SER(job).data, request=request)
+
+
+class PollReportJobView(APIView):
+    """GET /reports/<job_id>/ - poll status of an existing report job."""
+
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Reports"],
+        summary="Poll report job status",
+        responses={
+            200: OpenApiResponse(description="Current job state.", response=ReportJobResponseSerializer),
+            404: OpenApiResponse(description="Job not found."),
+        },
+    )
+    def get(self, request: Request, job_id: _UUID) -> Response:
+        """Return the current state of the report job."""
+        try:
+            job = _POLL_REPORT_UC(_REPORT_REPO()).execute(job_id=job_id)
+        except ReportJobNotFoundError as exc:
+            return error_response("ERR_REPORT_JOB_NOT_FOUND", str(exc), http_status=404, request=request)
+        return success_response(_REPORT_JOB_SER(job).data, request=request)
+
+
+class ReportDownloadView(APIView):
+    """GET /reports/<job_id>/download/ - get a presigned download URL."""
+
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Reports"],
+        summary="Get report download URL",
+        description="Returns a short-lived presigned URL to download the completed report file.",
+        responses={
+            200: OpenApiResponse(description="Presigned download URL."),
+            404: OpenApiResponse(description="Job not found."),
+            409: OpenApiResponse(description="Job not yet completed."),
+        },
+    )
+    def get(self, request: Request, job_id: _UUID) -> Response:
+        """Return a presigned URL for the completed report."""
+        try:
+            from apps.intelligence.infrastructure.storage import MinioReportStorage
+
+            url = _DOWNLOAD_REPORT_UC(_REPORT_REPO(), MinioReportStorage()).execute(job_id=job_id)
+        except ReportJobNotFoundError as exc:
+            return error_response("ERR_REPORT_JOB_NOT_FOUND", str(exc), http_status=404, request=request)
+        except ReportJobNotCompletedError as exc:
+            return error_response("ERR_REPORT_JOB_NOT_COMPLETED", str(exc), http_status=409, request=request)
+        return success_response({"download_url": url}, request=request)

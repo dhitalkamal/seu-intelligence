@@ -8,6 +8,7 @@ from .views import (
     ChatbotView,
     ConnectionPrivacyView,
     ConnectionsView,
+    GenerateReportView,
     HealthCheckView,
     HealthHistoryLatestView,
     HealthHistoryView,
@@ -22,6 +23,8 @@ from .views import (
     NLPSearchView,
     NLPSentimentView,
     NLPSimilarityView,
+    PollReportJobView,
+    ReportDownloadView,
 )
 
 urlpatterns: list[URLPattern] = [
@@ -57,4 +60,8 @@ urlpatterns: list[URLPattern] = [
     # health ping history (superadmin dashboard)
     path("health-history/", HealthHistoryView.as_view(), name="health-history"),
     path("health-history/latest/", HealthHistoryLatestView.as_view(), name="health-history-latest"),
+    # report generation (F8.1)
+    path("reports/", GenerateReportView.as_view(), name="report-generate"),
+    path("reports/<uuid:job_id>/", PollReportJobView.as_view(), name="report-poll"),
+    path("reports/<uuid:job_id>/download/", ReportDownloadView.as_view(), name="report-download"),
 ]
