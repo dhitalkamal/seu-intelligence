@@ -15,9 +15,12 @@ from rest_framework.views import APIView
 
 from apps.common.api.responses import created_response, error_response, success_response
 from apps.common.health import check_database, check_rabbitmq, check_redis
+from apps.common.permissions import IsOrgMember
 from apps.intelligence.application.use_cases.calculate_health import CalculateHealthScoreUseCase
+from apps.intelligence.application.use_cases.create_scheduled_report import CreateScheduledReportUseCase
 from apps.intelligence.application.use_cases.generate_report import GenerateReportUseCase
 from apps.intelligence.application.use_cases.get_connections import GetConnectionsUseCase
+from apps.intelligence.application.use_cases.get_growth_analytics import GetGrowthAnalyticsUseCase
 from apps.intelligence.application.use_cases.get_health import GetLatestHealthScoreUseCase
 from apps.intelligence.application.use_cases.get_health_history import GetHealthHistoryUseCase, GetLatestHealthRoundUseCase
 from apps.intelligence.application.use_cases.get_privacy import GetPrivacyUseCase
@@ -25,18 +28,22 @@ from apps.intelligence.application.use_cases.get_report_download_url import GetR
 from apps.intelligence.application.use_cases.ingest_batch import IngestBatchUseCase
 from apps.intelligence.application.use_cases.ingest_event import IngestEventUseCase
 from apps.intelligence.application.use_cases.poll_report_job import PollReportJobUseCase
+from apps.intelligence.application.use_cases.predict_attendance import PredictAttendanceUseCase
 from apps.intelligence.application.use_cases.send_introduction import SendIntroductionUseCase
 from apps.intelligence.application.use_cases.tokenize import tokenize_query
+from apps.intelligence.application.use_cases.trigger_scheduled_reports import TriggerScheduledReportsUseCase
 from apps.intelligence.application.use_cases.update_privacy import UpdatePrivacyUseCase
 from apps.intelligence.domain.exceptions import MatchNotFoundError, OptInRequiredError, ReportJobNotCompletedError, ReportJobNotFoundError
 from apps.intelligence.infrastructure.repositories import (
     DjangoAnalyticsEventQueryRepository,
     DjangoAnalyticsEventRepository,
+    DjangoAnalyticsGrowthRepository,
     DjangoAttendeeMatchRepository,
     DjangoConnectionPrivacyRepository,
     DjangoHealthPingRepository,
     DjangoHealthScoreRepository,
     DjangoReportJobRepository,
+    DjangoScheduledReportRepository,
 )
 from apps.intelligence.presentation.serializers import (
     GenerateReportInputSerializer,
@@ -48,6 +55,7 @@ from apps.intelligence.presentation.serializers import (
 )
 
 _IS_AUTH = IsAuthenticated
+_IS_ORG_MEMBER = IsOrgMember
 _CREATED = created_response
 _UUID = uuid.UUID
 _INGEST_UC = IngestEventUseCase
@@ -76,6 +84,9 @@ _POLL_REPORT_UC = PollReportJobUseCase
 _DOWNLOAD_REPORT_UC = GetReportDownloadUrlUseCase
 _GENERATE_REPORT_SER = GenerateReportInputSerializer
 _REPORT_JOB_SER = ReportJobResponseSerializer
+_GROWTH_REPO = DjangoAnalyticsGrowthRepository
+_GROWTH_UC = GetGrowthAnalyticsUseCase
+_PREDICT_UC = PredictAttendanceUseCase
 
 _CHECKS = inline_serializer(
     name="DependencyChecks",
@@ -963,7 +974,7 @@ class HealthHistoryLatestView(APIView):
 class GenerateReportView(APIView):
     """POST /reports/ - create a new async report job."""
 
-    permission_classes = [_IS_AUTH]
+    permission_classes = [_IS_ORG_MEMBER]
 
     @extend_schema(
         tags=["Reports"],
@@ -997,7 +1008,7 @@ class GenerateReportView(APIView):
 class PollReportJobView(APIView):
     """GET /reports/<job_id>/ - poll status of an existing report job."""
 
-    permission_classes = [_IS_AUTH]
+    permission_classes = [_IS_ORG_MEMBER]
 
     @extend_schema(
         tags=["Reports"],
@@ -1019,7 +1030,7 @@ class PollReportJobView(APIView):
 class ReportDownloadView(APIView):
     """GET /reports/<job_id>/download/ - get a presigned download URL."""
 
-    permission_classes = [_IS_AUTH]
+    permission_classes = [_IS_ORG_MEMBER]
 
     @extend_schema(
         tags=["Reports"],
@@ -1042,3 +1053,181 @@ class ReportDownloadView(APIView):
         except ReportJobNotCompletedError as exc:
             return error_response("ERR_REPORT_JOB_NOT_COMPLETED", str(exc), http_status=409, request=request)
         return success_response({"download_url": url}, request=request)
+
+
+class GrowthAnalyticsView(APIView):
+    """GET /events/<event_id>/analytics/growth/ - daily registration and revenue aggregates."""
+
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Analytics"],
+        summary="Get growth analytics",
+        responses={
+            200: OpenApiResponse(description="Daily registration and revenue aggregates."),
+        },
+    )
+    def get(self, request: Request, event_id: _UUID) -> Response:
+        """Return daily registration counts and revenue totals for the event."""
+        since_str = request.query_params.get("since")
+        until_str = request.query_params.get("until")
+        since = None
+        until = None
+        if since_str:
+            try:
+                from datetime import datetime as _dt
+
+                since = _dt.fromisoformat(since_str)
+            except ValueError:
+                return error_response("ERR_INVALID_SINCE", "since must be an ISO 8601 datetime.", http_status=400, request=request)
+        if until_str:
+            try:
+                from datetime import datetime as _dt
+
+                until = _dt.fromisoformat(until_str)
+            except ValueError:
+                return error_response("ERR_INVALID_UNTIL", "until must be an ISO 8601 datetime.", http_status=400, request=request)
+        result = _GROWTH_UC(_GROWTH_REPO()).execute(event_id=event_id, since=since, until=until)
+        return success_response(result, request=request)
+
+
+class AttendancePredictionView(APIView):
+    """GET /events/<event_id>/analytics/predictions/ - predict final attendance."""
+
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Analytics"],
+        summary="Predict event attendance",
+        responses={
+            200: OpenApiResponse(description="Attendance prediction with confidence level."),
+        },
+    )
+    def get(self, request: Request, event_id: _UUID) -> Response:
+        """Return predicted attendance and confidence based on registration trends."""
+        result = _PREDICT_UC(_GROWTH_REPO()).execute(event_id=event_id)
+        return success_response(result, request=request)
+
+
+# * scheduled report views
+
+_SCHED_REPO = DjangoScheduledReportRepository
+_SCHED_CREATE_UC = CreateScheduledReportUseCase
+_SCHED_TRIGGER_UC = TriggerScheduledReportsUseCase
+
+
+class ScheduledReportCreateView(APIView):
+    """POST /events/<event_id>/reports/schedules/ - create a recurring report schedule."""
+
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Reports"],
+        summary="Create a scheduled report",
+        request=inline_serializer(
+            name="ScheduledReportCreateRequest",
+            fields={
+                "report_type": serializers.CharField(),
+                "filters": serializers.DictField(required=False, default=dict),
+                "format": serializers.ChoiceField(choices=["csv", "excel", "pdf"]),
+                "cron_expression": serializers.CharField(),
+            },
+        ),
+        responses={
+            201: OpenApiResponse(description="Schedule created."),
+            400: OpenApiResponse(description="Validation error or invalid cron expression."),
+        },
+    )
+    def post(self, request: Request, event_id: _UUID) -> Response:
+        """Validate input and create the recurring report schedule."""
+        data = request.data
+        report_type = data.get("report_type", "")
+        fmt = data.get("format", "")
+        cron_expression = data.get("cron_expression", "")
+        filters = data.get("filters", {})
+
+        if not report_type:
+            return error_response("ERR_MISSING_REPORT_TYPE", "report_type is required.", http_status=400, request=request)
+        if fmt not in ("csv", "excel", "pdf"):
+            return error_response("ERR_INVALID_FORMAT", "format must be csv, excel, or pdf.", http_status=400, request=request)
+        if not cron_expression:
+            return error_response("ERR_MISSING_CRON", "cron_expression is required.", http_status=400, request=request)
+
+        try:
+            entity = _SCHED_CREATE_UC(_SCHED_REPO()).execute(
+                event_id=event_id,
+                requested_by=request.user.id,
+                report_type=report_type,
+                filters=filters if isinstance(filters, dict) else {},
+                format=fmt,
+                cron_expression=cron_expression,
+            )
+        except ValueError as exc:
+            return error_response("ERR_INVALID_CRON", str(exc), http_status=400, request=request)
+
+        return success_response(
+            {
+                "id": str(entity.id),
+                "event_id": str(entity.event_id),
+                "report_type": entity.report_type,
+                "format": entity.format,
+                "cron_expression": entity.cron_expression,
+                "is_active": entity.is_active,
+                "next_run_at": entity.next_run_at.isoformat() if entity.next_run_at else None,
+                "created_at": entity.created_at.isoformat(),
+            },
+            status=201,
+            request=request,
+        )
+
+
+class ScheduledReportListView(APIView):
+    """GET /events/<event_id>/reports/schedules/ - list all schedules for an event."""
+
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Reports"],
+        summary="List scheduled reports for an event",
+        responses={
+            200: OpenApiResponse(description="List of schedule configs."),
+        },
+    )
+    def get(self, request: Request, event_id: _UUID) -> Response:
+        """Return all schedule records for the given event."""
+        entities = _SCHED_REPO().list_for_event(event_id=event_id)
+        data = [
+            {
+                "id": str(e.id),
+                "report_type": e.report_type,
+                "format": e.format,
+                "cron_expression": e.cron_expression,
+                "is_active": e.is_active,
+                "next_run_at": e.next_run_at.isoformat() if e.next_run_at else None,
+                "last_run_at": e.last_run_at.isoformat() if e.last_run_at else None,
+            }
+            for e in entities
+        ]
+        return success_response(data, request=request)
+
+
+class ScheduledReportDeactivateView(APIView):
+    """DELETE /reports/schedules/<schedule_id>/ - deactivate a schedule."""
+
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Reports"],
+        summary="Deactivate a scheduled report",
+        responses={
+            200: OpenApiResponse(description="Schedule deactivated."),
+            404: OpenApiResponse(description="Schedule not found."),
+        },
+    )
+    def delete(self, request: Request, schedule_id: _UUID) -> Response:
+        """Mark the schedule as inactive."""
+        try:
+            entity = _SCHED_REPO().deactivate(schedule_id=schedule_id)
+        except Exception:
+            return error_response("ERR_NOT_FOUND", "Schedule not found.", http_status=404, request=request)
+        return success_response({"id": str(entity.id), "is_active": entity.is_active}, request=request)
