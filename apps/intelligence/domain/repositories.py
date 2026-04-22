@@ -10,9 +10,11 @@ from apps.intelligence.domain.entities import (
     AnalyticsEventEntity,
     AttendeeMatchEntity,
     ConnectionPrivacyEntity,
+    DailyAggregateEntity,
     HealthPingEntity,
     HealthScoreEntity,
     ReportJobEntity,
+    ScheduledReportEntity,
 )
 
 
@@ -114,3 +116,39 @@ class IReportStorage(ABC):
 
     @abstractmethod
     def generate_presigned_url(self, file_key: str, expires_in: int = 3600) -> str: ...
+
+
+class IAnalyticsGrowthRepository(ABC):
+    """Read-only queries that aggregate analytics events into daily buckets."""
+
+    @abstractmethod
+    def aggregate_daily(
+        self,
+        event_id: uuid.UUID,
+        event_type_prefix: str,
+        since: datetime | None,
+        until: datetime | None,
+    ) -> list[DailyAggregateEntity]:
+        """Return one DailyAggregateEntity per day within the date range."""
+        ...
+
+
+class IScheduledReportRepository(ABC):
+    """Persistence contract for recurring report schedule configurations."""
+
+    @abstractmethod
+    def create(self, entity: ScheduledReportEntity) -> ScheduledReportEntity: ...
+
+    @abstractmethod
+    def list_due(self, as_of: datetime) -> list[ScheduledReportEntity]:
+        """Return active schedules whose next_run_at is on or before as_of."""
+        ...
+
+    @abstractmethod
+    def update(self, entity: ScheduledReportEntity) -> ScheduledReportEntity: ...
+
+    @abstractmethod
+    def list_for_event(self, event_id: uuid.UUID) -> list[ScheduledReportEntity]: ...
+
+    @abstractmethod
+    def deactivate(self, schedule_id: uuid.UUID) -> ScheduledReportEntity: ...

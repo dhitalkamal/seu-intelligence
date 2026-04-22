@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 
@@ -93,3 +93,29 @@ class ReportJobEntity:
     created_at: datetime
     file_url: str | None = None
     completed_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class ScheduledReportEntity:
+    """A recurring report schedule configuration."""
+
+    id: uuid.UUID
+    event_id: uuid.UUID
+    requested_by: uuid.UUID
+    report_type: str
+    filters: dict
+    format: str
+    cron_expression: str
+    is_active: bool
+    created_at: datetime
+    next_run_at: datetime | None = None
+    last_run_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class DailyAggregateEntity:
+    """A single day's aggregate of count and total revenue value."""
+
+    date: date
+    count: int
+    total_value: Decimal
