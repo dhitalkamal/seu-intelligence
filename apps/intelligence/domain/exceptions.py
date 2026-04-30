@@ -38,3 +38,10 @@ class ReportJobNotCompletedError(DomainError):
 
     http_status = 409
     code = "ERR_REPORT_JOB_NOT_COMPLETED"
+
+
+class ScheduledReportNotFoundError(DomainError):
+    """Raised when a scheduled report record cannot be found."""
+
+    http_status = 404
+    code = "ERR_SCHEDULED_REPORT_NOT_FOUND"

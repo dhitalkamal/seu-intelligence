@@ -14,6 +14,7 @@ from apps.intelligence.domain.entities import (
     HealthPingEntity,
     HealthScoreEntity,
     ReportJobEntity,
+    ScheduledReportEntity,
 )
 
 
@@ -311,4 +312,59 @@ class ReportJob(models.Model):
             status=entity.status,
             file_url=entity.file_url,
             completed_at=entity.completed_at,
+        )
+
+
+class ScheduledReport(models.Model):
+    """A recurring report schedule configuration for an event."""
+
+    class Meta:
+        db_table = '"intelligence"."scheduled_report"'
+        indexes = [
+            models.Index(fields=["event_id", "is_active"], name="idx_scheduled_report_event"),
+            models.Index(fields=["is_active", "next_run_at"], name="idx_scheduled_report_due"),
+        ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_id = models.UUIDField()
+    requested_by = models.UUIDField()
+    report_type = models.CharField(max_length=50)
+    filters = models.JSONField(default=dict)
+    format = models.CharField(max_length=10)
+    cron_expression = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    next_run_at = models.DateTimeField(null=True, blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+
+    def to_entity(self) -> ScheduledReportEntity:
+        """Map this ORM row to a pure-Python ScheduledReportEntity."""
+        return ScheduledReportEntity(
+            id=self.id,
+            event_id=self.event_id,
+            requested_by=self.requested_by,
+            report_type=self.report_type,
+            filters=self.filters,
+            format=self.format,
+            cron_expression=self.cron_expression,
+            is_active=self.is_active,
+            created_at=self.created_at,
+            next_run_at=self.next_run_at,
+            last_run_at=self.last_run_at,
+        )
+
+    @classmethod
+    def from_entity(cls, entity: ScheduledReportEntity) -> "ScheduledReport":
+        """Build an unsaved ORM instance from a ScheduledReportEntity."""
+        return cls(
+            id=entity.id,
+            event_id=entity.event_id,
+            requested_by=entity.requested_by,
+            report_type=entity.report_type,
+            filters=entity.filters,
+            format=entity.format,
+            cron_expression=entity.cron_expression,
+            is_active=entity.is_active,
+            next_run_at=entity.next_run_at,
+            last_run_at=entity.last_run_at,
         )

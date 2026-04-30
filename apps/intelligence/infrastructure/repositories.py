@@ -9,19 +9,28 @@ from apps.intelligence.domain.entities import (
     AnalyticsEventEntity,
     AttendeeMatchEntity,
     ConnectionPrivacyEntity,
+    DailyAggregateEntity,
     HealthPingEntity,
     HealthScoreEntity,
     ReportJobEntity,
+    ScheduledReportEntity,
 )
-from apps.intelligence.domain.exceptions import HealthScoreNotFoundError, MatchNotFoundError, ReportJobNotFoundError
+from apps.intelligence.domain.exceptions import (
+    HealthScoreNotFoundError,
+    MatchNotFoundError,
+    ReportJobNotFoundError,
+    ScheduledReportNotFoundError,
+)
 from apps.intelligence.domain.repositories import (
     IAnalyticsEventQueryRepository,
     IAnalyticsEventRepository,
+    IAnalyticsGrowthRepository,
     IAttendeeMatchRepository,
     IConnectionPrivacyRepository,
     IHealthPingRepository,
     IHealthScoreRepository,
     IReportJobRepository,
+    IScheduledReportRepository,
 )
 from apps.intelligence.infrastructure.models import (
     AnalyticsEvent,
@@ -30,6 +39,7 @@ from apps.intelligence.infrastructure.models import (
     EventHealthScore,
     HealthPing,
     ReportJob,
+    ScheduledReport,
 )
 
 
@@ -202,3 +212,83 @@ class DjangoReportJobRepository(IReportJobRepository):
             completed_at=entity.completed_at,
         )
         return entity
+
+
+class DjangoAnalyticsGrowthRepository(IAnalyticsGrowthRepository):
+    """Aggregates analytics events into daily registration and revenue buckets."""
+
+    def aggregate_daily(
+        self,
+        event_id: uuid.UUID,
+        event_type_prefix: str,
+        since: datetime | None,
+        until: datetime | None,
+    ) -> list[DailyAggregateEntity]:
+        """Return one DailyAggregateEntity per day matching the event_type prefix and date range."""
+        from decimal import Decimal as _Decimal
+
+        from django.db.models import Sum
+        from django.db.models.functions import TruncDate
+
+        qs = AnalyticsEvent.objects.filter(
+            event_id=event_id,
+            event_type__startswith=event_type_prefix,
+        )
+        if since is not None:
+            qs = qs.filter(occurred_at__gte=since)
+        if until is not None:
+            qs = qs.filter(occurred_at__lte=until)
+
+        from django.db.models import Count
+
+        rows = qs.annotate(day=TruncDate("occurred_at")).values("day").annotate(count=Count("id"), total_value=Sum("value")).order_by("day")
+
+        result = []
+        for row in rows:
+            result.append(
+                DailyAggregateEntity(
+                    date=row["day"],
+                    count=row["count"],
+                    total_value=row["total_value"] or _Decimal("0"),
+                )
+            )
+        return result
+
+
+class DjangoScheduledReportRepository(IScheduledReportRepository):
+    """Persists ScheduledReport entities using the Django ORM."""
+
+    def create(self, entity: ScheduledReportEntity) -> ScheduledReportEntity:
+        """Persist a new schedule and return the saved entity."""
+        obj = ScheduledReport.from_entity(entity)
+        obj.save(using="default")
+        return obj.to_entity()
+
+    def list_due(self, as_of: datetime) -> list[ScheduledReportEntity]:
+        """Return active schedules whose next_run_at is on or before as_of."""
+        qs = ScheduledReport.objects.filter(is_active=True, next_run_at__lte=as_of)
+        return [obj.to_entity() for obj in qs]
+
+    def update(self, entity: ScheduledReportEntity) -> ScheduledReportEntity:
+        """Overwrite is_active, next_run_at, and last_run_at on the stored row."""
+        ScheduledReport.objects.filter(id=entity.id).update(
+            is_active=entity.is_active,
+            next_run_at=entity.next_run_at,
+            last_run_at=entity.last_run_at,
+        )
+        return entity
+
+    def list_for_event(self, event_id: uuid.UUID) -> list[ScheduledReportEntity]:
+        """Return all schedules for a given event, newest first."""
+        qs = ScheduledReport.objects.filter(event_id=event_id).order_by("-created_at")
+        return [obj.to_entity() for obj in qs]
+
+    def deactivate(self, schedule_id: uuid.UUID) -> ScheduledReportEntity:
+        """Set is_active=False and return the updated entity."""
+        try:
+            obj = ScheduledReport.objects.get(id=schedule_id)
+        except ScheduledReport.DoesNotExist:
+            raise ScheduledReportNotFoundError(f"Scheduled report {schedule_id} not found.")
+        obj.is_active = False
+        obj.save(update_fields=["is_active"])
+        return obj.to_entity()
