@@ -7,6 +7,8 @@ from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+SERVICE_NAME = "intelligence-service"
+
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="", cast=Csv())
@@ -91,6 +93,9 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.StandardPagination",
+    "PAGE_SIZE": 20,
+    "EXCEPTION_HANDLER": "apps.common.exceptions.api_exception_handler",
 }
 
 SIMPLE_JWT = {
@@ -100,6 +105,7 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="", cast=Csv())
 
 REDIS_URL = config("REDIS_URL", default="redis://localhost:6379/0")
+RABBITMQ_URL = config("RABBITMQ_URL", default="amqp://guest:guest@localhost:5672/")
 
 CACHES = {
     "default": {

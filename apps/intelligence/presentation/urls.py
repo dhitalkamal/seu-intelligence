@@ -1,6 +1,10 @@
 """URL patterns for all intelligence endpoints under /api/v1/."""
 from __future__ import annotations
 
-from django.urls import URLPattern
+from django.urls import URLPattern, path
 
-urlpatterns: list[URLPattern] = []
+from .views import HealthCheckView
+
+urlpatterns: list[URLPattern] = [
+    path("health/", HealthCheckView.as_view(), name="health"),
+]

@@ -12,6 +12,7 @@ dependencies = [
     "python-decouple",
     "gunicorn",
     "redis",
+    "pika",
 ]
 
 [dependency-groups]
