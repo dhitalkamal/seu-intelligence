@@ -14,16 +14,18 @@ class StandardPagination(PageNumberPagination):
 
     def get_paginated_response(self, data: list) -> Response:
         """Wrap results in {data, meta} to match the project API contract."""
-        return Response({
-            "data": data,
-            "meta": {
-                "count": self.page.paginator.count,
-                "page": self.page.number,
-                "pages": self.page.paginator.num_pages,
-                "next": self.get_next_link(),
-                "previous": self.get_previous_link(),
-            },
-        })
+        return Response(
+            {
+                "data": data,
+                "meta": {
+                    "count": self.page.paginator.count,
+                    "page": self.page.number,
+                    "pages": self.page.paginator.num_pages,
+                    "next": self.get_next_link(),
+                    "previous": self.get_previous_link(),
+                },
+            }
+        )
 
     def get_paginated_response_schema(self, schema: dict) -> dict:
         """OpenAPI schema for the paginated envelope."""
