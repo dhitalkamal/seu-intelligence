@@ -4,6 +4,8 @@ from __future__ import annotations
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
+from apps.common.api.responses import _meta
+
 
 class StandardPagination(PageNumberPagination):
     """Page-number pagination that returns the project meta envelope."""
@@ -13,16 +15,21 @@ class StandardPagination(PageNumberPagination):
     max_page_size = 100
 
     def get_paginated_response(self, data: list) -> Response:
-        """Wrap results in {data, meta} to match the project API contract."""
+        """Wrap results in the standard {data, error, meta} envelope."""
         return Response(
             {
                 "data": data,
+                "error": None,
                 "meta": {
-                    "count": self.page.paginator.count,
-                    "page": self.page.number,
-                    "pages": self.page.paginator.num_pages,
-                    "next": self.get_next_link(),
-                    "previous": self.get_previous_link(),
+                    **_meta(),
+                    "pagination": {
+                        "page": self.page.number,
+                        "per_page": self.page.paginator.per_page,
+                        "total": self.page.paginator.count,
+                        "total_pages": self.page.paginator.num_pages,
+                        "has_next": self.get_next_link() is not None,
+                        "has_prev": self.get_previous_link() is not None,
+                    },
                 },
             }
         )
@@ -31,17 +38,26 @@ class StandardPagination(PageNumberPagination):
         """OpenAPI schema for the paginated envelope."""
         return {
             "type": "object",
-            "required": ["data", "meta"],
+            "required": ["data", "error", "meta"],
             "properties": {
                 "data": schema,
+                "error": {"type": "object", "nullable": True},
                 "meta": {
                     "type": "object",
                     "properties": {
-                        "count": {"type": "integer"},
-                        "page": {"type": "integer"},
-                        "pages": {"type": "integer"},
-                        "next": {"type": "string", "nullable": True},
-                        "previous": {"type": "string", "nullable": True},
+                        "request_id": {"type": "string"},
+                        "timestamp": {"type": "string"},
+                        "pagination": {
+                            "type": "object",
+                            "properties": {
+                                "page": {"type": "integer"},
+                                "per_page": {"type": "integer"},
+                                "total": {"type": "integer"},
+                                "total_pages": {"type": "integer"},
+                                "has_next": {"type": "boolean"},
+                                "has_prev": {"type": "boolean"},
+                            },
+                        },
                     },
                 },
             },

@@ -1,11 +1,11 @@
-"""Django settings for the intelligence-service."""
+"""Base Django settings for the intelligence-service."""
 from __future__ import annotations
 
 from pathlib import Path
 
 from decouple import Csv, config
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SERVICE_NAME = "intelligence-service"
 
@@ -28,6 +28,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "apps.common.middleware.request_context.RequestContextMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",

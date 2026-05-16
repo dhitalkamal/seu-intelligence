@@ -9,15 +9,22 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.api.responses import error_response, success_response
 from apps.common.health import check_database, check_rabbitmq, check_redis
 
-# Reusable check-status schema shared by the healthy and unhealthy responses.
-_DEPENDENCY_CHECKS = inline_serializer(
+_CHECKS = inline_serializer(
     name="DependencyChecks",
     fields={
         "database": serializers.ChoiceField(choices=["healthy", "unhealthy"]),
         "redis": serializers.ChoiceField(choices=["healthy", "unhealthy"]),
         "rabbitmq": serializers.ChoiceField(choices=["healthy", "unhealthy"]),
+    },
+)
+_META_SCHEMA = inline_serializer(
+    name="ResponseMeta",
+    fields={
+        "request_id": serializers.CharField(),
+        "timestamp": serializers.CharField(),
     },
 )
 
@@ -48,9 +55,11 @@ class HealthCheckView(APIView):
                                 "service": serializers.CharField(),
                                 "status": serializers.CharField(),
                                 "version": serializers.CharField(),
-                                "checks": _DEPENDENCY_CHECKS,
+                                "checks": _CHECKS,
                             },
                         ),
+                        "error": serializers.JSONField(allow_null=True),
+                        "meta": _META_SCHEMA,
                     },
                 ),
             ),
@@ -59,12 +68,16 @@ class HealthCheckView(APIView):
                 response=inline_serializer(
                     name="UnhealthyResponse",
                     fields={
-                        "type": serializers.CharField(),
-                        "title": serializers.CharField(),
-                        "status": serializers.IntegerField(),
-                        "detail": serializers.CharField(),
-                        "code": serializers.CharField(),
-                        "checks": _DEPENDENCY_CHECKS,
+                        "data": serializers.JSONField(allow_null=True),
+                        "error": inline_serializer(
+                            name="HealthError",
+                            fields={
+                                "code": serializers.CharField(),
+                                "message": serializers.CharField(),
+                                "details": serializers.JSONField(allow_null=True),
+                            },
+                        ),
+                        "meta": _META_SCHEMA,
                     },
                 ),
             ),
@@ -94,28 +107,20 @@ class HealthCheckView(APIView):
         all_healthy = all(s == "healthy" for s in checks.values())
 
         if all_healthy:
-            return Response(
+            return success_response(
                 {
-                    "data": {
-                        "service": settings.SERVICE_NAME,
-                        "status": "healthy",
-                        "version": "0.1.0",
-                        "checks": checks,
-                    }
+                    "service": settings.SERVICE_NAME,
+                    "status": "healthy",
+                    "version": "0.1.0",
+                    "checks": checks,
                 },
-                status=200,
+                request=request,
             )
 
-        return Response(
-            {
-                "type": "/errors/service-unavailable",
-                "title": "Service Unhealthy",
-                "status": 503,
-                "detail": "One or more dependencies are unavailable.",
-                "code": "SERVICE_UNHEALTHY",
-                "checks": checks,
-                **({"errors": dep_errors} if dep_errors else {}),
-            },
-            status=503,
-            content_type="application/problem+json",
+        return error_response(
+            code="ERR_SERVICE_UNHEALTHY",
+            message="One or more dependencies are unavailable.",
+            details={"checks": checks, **({"errors": dep_errors} if dep_errors else {})},
+            http_status=503,
+            request=request,
         )

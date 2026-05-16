@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Django's command-line utility for administrative tasks."""
+"""Django command-line utility for administrative tasks."""
 from __future__ import annotations
 
 import os
@@ -8,7 +8,7 @@ import sys
 
 def main() -> None:
     """Entry point for Django management commands."""
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

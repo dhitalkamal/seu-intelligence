@@ -1,5 +1,9 @@
-"""RFC 9457 Problem Details exception handler and base domain error class."""
+"""Exception handler and base domain error class."""
 from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any
 
 from rest_framework import status
 from rest_framework.response import Response
@@ -9,12 +13,12 @@ from rest_framework.views import exception_handler as drf_exception_handler
 class DomainError(Exception):
     """Base for all domain-level errors.
 
-    Subclasses set `code` (SCREAMING_SNAKE) and `http_status`.
-    The exception handler maps these directly to RFC 9457 responses.
+    Subclasses define `code` using ERR_<CONTEXT>_<REASON> format
+    and `http_status` for the correct HTTP response code.
     """
 
     http_status: int = 400
-    code: str = "DOMAIN_ERROR"
+    code: str = "ERR_DOMAIN_ERROR"
 
     def __init__(self, detail: str) -> None:
         """Store the human-readable problem detail."""
@@ -22,29 +26,26 @@ class DomainError(Exception):
         super().__init__(detail)
 
 
-def _problem(
-    type_slug: str,
-    title: str,
-    http_status: int,
-    detail: str,
-    code: str,
-    extra: dict | None = None,
-) -> Response:
-    """Build an RFC 9457 Problem Details response body."""
-    body: dict = {
-        "type": f"/errors/{type_slug}",
-        "title": title,
-        "status": http_status,
-        "detail": detail,
-        "code": code,
+def _meta(request: Any = None) -> dict:
+    """Build the standard meta block (duplicated here to avoid circular imports)."""
+    request_id = getattr(request, "request_id", None) or str(uuid.uuid4())
+    return {
+        "request_id": request_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    if extra:
-        body.update(extra)
-    return Response(body, status=http_status, content_type="application/problem+json")
 
 
-def _detail(data: dict | list | str, fallback: str) -> str:
-    """Extract a readable string from whatever DRF puts in response.data."""
+def _body(code: str, message: str, details: Any, request: Any) -> dict:
+    """Assemble the error envelope."""
+    return {
+        "data": None,
+        "error": {"code": code, "message": message, "details": details},
+        "meta": _meta(request),
+    }
+
+
+def _extract(data: dict | list | str, fallback: str) -> str:
+    """Pull a readable string from whatever DRF puts in response.data."""
     if isinstance(data, dict):
         return str(data.get("detail", fallback))
     if isinstance(data, list) and data:
@@ -53,15 +54,11 @@ def _detail(data: dict | list | str, fallback: str) -> str:
 
 
 def api_exception_handler(exc: Exception, context: dict) -> Response | None:
-    """Convert DRF and domain exceptions into RFC 9457 Problem Details."""
+    """Convert DRF and domain exceptions into the standard error envelope."""
+    request = context.get("request")
+
     if isinstance(exc, DomainError):
-        return _problem(
-            type_slug=exc.code.lower().replace("_", "-"),
-            title=exc.code.replace("_", " ").title(),
-            http_status=exc.http_status,
-            detail=exc.detail,
-            code=exc.code,
-        )
+        return Response(_body(exc.code, exc.detail, None, request), status=exc.http_status)
 
     response = drf_exception_handler(exc, context)
     if response is None:
@@ -71,64 +68,36 @@ def api_exception_handler(exc: Exception, context: dict) -> Response | None:
     http_status = response.status_code
 
     if http_status == status.HTTP_400_BAD_REQUEST:
-        return _problem(
-            type_slug="validation-error",
-            title="Validation Error",
-            http_status=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="The submitted data failed validation.",
-            code="VALIDATION_ERROR",
-            extra={"errors": data},
+        return Response(
+            _body("ERR_VALIDATION_FAILED", "The submitted data failed validation.", data, request),
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
-
     if http_status == status.HTTP_401_UNAUTHORIZED:
-        return _problem(
-            type_slug="unauthorized",
-            title="Unauthorized",
-            http_status=401,
-            detail=_detail(data, "Authentication credentials were not provided."),
-            code="UNAUTHORIZED",
+        return Response(
+            _body("ERR_AUTH_UNAUTHORIZED", _extract(data, "Authentication credentials were not provided."), None, request),
+            status=401,
         )
-
     if http_status == status.HTTP_403_FORBIDDEN:
-        return _problem(
-            type_slug="forbidden",
-            title="Forbidden",
-            http_status=403,
-            detail=_detail(data, "You do not have permission to perform this action."),
-            code="FORBIDDEN",
+        return Response(
+            _body("ERR_PERMISSION_DENIED", _extract(data, "You do not have permission to perform this action."), None, request),
+            status=403,
         )
-
     if http_status == status.HTTP_404_NOT_FOUND:
-        return _problem(
-            type_slug="not-found",
-            title="Not Found",
-            http_status=404,
-            detail=_detail(data, "The requested resource was not found."),
-            code="NOT_FOUND",
+        return Response(
+            _body("ERR_RESOURCE_NOT_FOUND", _extract(data, "The requested resource was not found."), None, request),
+            status=404,
         )
-
     if http_status == status.HTTP_405_METHOD_NOT_ALLOWED:
-        return _problem(
-            type_slug="method-not-allowed",
-            title="Method Not Allowed",
-            http_status=405,
-            detail=_detail(data, "Method not allowed."),
-            code="METHOD_NOT_ALLOWED",
+        return Response(
+            _body("ERR_METHOD_NOT_ALLOWED", _extract(data, "Method not allowed."), None, request),
+            status=405,
         )
-
     if http_status == status.HTTP_429_TOO_MANY_REQUESTS:
-        return _problem(
-            type_slug="too-many-requests",
-            title="Too Many Requests",
-            http_status=429,
-            detail=_detail(data, "Request was throttled."),
-            code="TOO_MANY_REQUESTS",
+        return Response(
+            _body("ERR_RATE_LIMIT_EXCEEDED", _extract(data, "Request was throttled."), None, request),
+            status=429,
         )
-
-    return _problem(
-        type_slug="api-error",
-        title="API Error",
-        http_status=http_status,
-        detail=_detail(data, "An unexpected error occurred."),
-        code="API_ERROR",
+    return Response(
+        _body("ERR_INTERNAL_ERROR", _extract(data, "An unexpected error occurred."), None, request),
+        status=http_status,
     )
