@@ -25,6 +25,32 @@ class AnalyticsEventEntity:
 
 
 @dataclass(slots=True)
+class AttendeeMatchEntity:
+    """A pairwise attendee match record for a specific event."""
+
+    id: uuid.UUID
+    event_id: uuid.UUID
+    user_id_a: uuid.UUID
+    user_id_b: uuid.UUID
+    match_score: Decimal
+    is_introduced: bool
+    created_at: datetime
+    match_signals: dict = field(default_factory=dict)
+    introduced_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class ConnectionPrivacyEntity:
+    """A user's opt-in preference for the Who to Meet feature at a specific event."""
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    event_id: uuid.UUID
+    opted_in: bool
+    created_at: datetime
+
+
+@dataclass(slots=True)
 class HealthScoreEntity:
     """A single calculated health score snapshot for an event."""
 

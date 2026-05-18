@@ -15,12 +15,20 @@ from rest_framework.views import APIView
 from apps.common.api.responses import created_response, error_response, success_response
 from apps.common.health import check_database, check_rabbitmq, check_redis
 from apps.intelligence.application.use_cases.calculate_health import CalculateHealthScoreUseCase
+from apps.intelligence.application.use_cases.get_connections import GetConnectionsUseCase
 from apps.intelligence.application.use_cases.get_health import GetLatestHealthScoreUseCase
+from apps.intelligence.application.use_cases.get_privacy import GetPrivacyUseCase
 from apps.intelligence.application.use_cases.ingest_batch import IngestBatchUseCase
 from apps.intelligence.application.use_cases.ingest_event import IngestEventUseCase
+from apps.intelligence.application.use_cases.send_introduction import SendIntroductionUseCase
 from apps.intelligence.application.use_cases.tokenize import tokenize_query
+from apps.intelligence.application.use_cases.update_privacy import UpdatePrivacyUseCase
+from apps.intelligence.domain.exceptions import MatchNotFoundError, OptInRequiredError
 from apps.intelligence.infrastructure.repositories import (
+    DjangoAnalyticsEventQueryRepository,
     DjangoAnalyticsEventRepository,
+    DjangoAttendeeMatchRepository,
+    DjangoConnectionPrivacyRepository,
     DjangoHealthScoreRepository,
 )
 from apps.intelligence.presentation.serializers import (
@@ -36,8 +44,15 @@ _INGEST_UC = IngestEventUseCase
 _BATCH_UC = IngestBatchUseCase
 _CALC_HEALTH_UC = CalculateHealthScoreUseCase
 _GET_HEALTH_UC = GetLatestHealthScoreUseCase
+_GET_CONNECTIONS_UC = GetConnectionsUseCase
+_SEND_INTRO_UC = SendIntroductionUseCase
+_GET_PRIVACY_UC = GetPrivacyUseCase
+_UPDATE_PRIVACY_UC = UpdatePrivacyUseCase
 _EVENT_REPO = DjangoAnalyticsEventRepository
 _HEALTH_REPO = DjangoHealthScoreRepository
+_MATCH_REPO = DjangoAttendeeMatchRepository
+_PRIVACY_REPO = DjangoConnectionPrivacyRepository
+_ANALYTICS_QUERY_REPO = DjangoAnalyticsEventQueryRepository
 _INGEST_SER = IngestEventSerializer
 _HEALTH_INPUT_SER = HealthScoreInputSerializer
 _HEALTH_RESP_SER = HealthScoreResponseSerializer
@@ -262,3 +277,120 @@ class NLPSearchView(APIView):
         query = request.query_params.get("q", "")
         result = tokenize_query(query)
         return success_response(result, request=request)
+
+
+class ConnectionsView(APIView):
+    """GET /events/{event_id}/connections/ - Who to Meet suggestions."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Who to Meet"],
+        summary="Get Who to Meet suggestions",
+        description=(
+            "Returns ranked attendee suggestions for the authenticated user at this event. "
+            "The user must have opted in via PATCH /events/{event_id}/connections/settings/. "
+            "Scores are computed using Jaccard similarity on past event attendance."
+        ),
+        responses={
+            200: OpenApiResponse(description="Match suggestions returned."),
+            403: OpenApiResponse(description="User has not opted in."),
+        },
+    )
+    def get(self, request: Request, event_id: uuid.UUID) -> Response:
+        """Return ranked Who to Meet suggestions for the authenticated user."""
+        try:
+            matches = _GET_CONNECTIONS_UC(
+                _MATCH_REPO(), _PRIVACY_REPO(), _ANALYTICS_QUERY_REPO()
+            ).execute(event_id=event_id, requesting_user_id=uuid.UUID(str(request.user.id)))
+        except OptInRequiredError as exc:
+            return error_response(code=exc.code, message=str(exc), http_status=403, request=request)
+        data = [
+            {
+                "match_id": str(m.id),
+                "user_id": str(
+                    m.user_id_b if m.user_id_a == uuid.UUID(str(request.user.id)) else m.user_id_a
+                ),
+                "match_score": str(m.match_score),
+                "match_signals": m.match_signals,
+                "is_introduced": m.is_introduced,
+                "introduced_at": m.introduced_at.isoformat() if m.introduced_at else None,
+            }
+            for m in matches
+        ]
+        return success_response(data, request=request)
+
+
+class IntroductionView(APIView):
+    """POST /events/{event_id}/connections/{user_id}/introduce/ - send introduction."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Who to Meet"],
+        summary="Send introduction request",
+        description="Marks both attendees as introduced. Both must have opted in.",
+        responses={
+            200: OpenApiResponse(description="Introduction sent."),
+            403: OpenApiResponse(description="Target user has not opted in."),
+            404: OpenApiResponse(description="No match record found."),
+        },
+    )
+    def post(self, request: Request, event_id: uuid.UUID, user_id: uuid.UUID) -> Response:
+        """Mark the two users as introduced."""
+        try:
+            match = _SEND_INTRO_UC(_MATCH_REPO(), _PRIVACY_REPO()).execute(
+                event_id=event_id,
+                requesting_user_id=uuid.UUID(str(request.user.id)),
+                target_user_id=user_id,
+            )
+        except OptInRequiredError as exc:
+            return error_response(code=exc.code, message=str(exc), http_status=403, request=request)
+        except MatchNotFoundError as exc:
+            return error_response(code=exc.code, message=str(exc), http_status=404, request=request)
+        return success_response(
+            {"match_id": str(match.id), "is_introduced": match.is_introduced},
+            request=request,
+        )
+
+
+class ConnectionPrivacyView(APIView):
+    """GET/PATCH /events/{event_id}/connections/settings/ - privacy opt-in."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Who to Meet"],
+        summary="Get privacy settings",
+        responses={200: OpenApiResponse(description="Privacy settings returned.")},
+    )
+    def get(self, request: Request, event_id: uuid.UUID) -> Response:
+        """Return the current opt-in preference for this user and event."""
+        pref = _GET_PRIVACY_UC(_PRIVACY_REPO()).execute(
+            user_id=uuid.UUID(str(request.user.id)), event_id=event_id
+        )
+        return success_response(
+            {"opted_in": pref.opted_in, "event_id": str(event_id)}, request=request
+        )
+
+    @extend_schema(
+        tags=["Who to Meet"],
+        summary="Update privacy settings",
+        responses={200: OpenApiResponse(description="Settings updated.")},
+    )
+    def patch(self, request: Request, event_id: uuid.UUID) -> Response:
+        """Opt in or out of the Who to Meet feature for this event."""
+        opted_in = request.data.get("opted_in")
+        if opted_in is None or not isinstance(opted_in, bool):
+            return error_response(
+                code="ERR_CONNECTIONS_INVALID_PAYLOAD",
+                message="opted_in (boolean) is required.",
+                http_status=400,
+                request=request,
+            )
+        pref = _UPDATE_PRIVACY_UC(_PRIVACY_REPO()).execute(
+            user_id=uuid.UUID(str(request.user.id)),
+            event_id=event_id,
+            opted_in=opted_in,
+        )
+        return success_response({"opted_in": pref.opted_in}, request=request)
