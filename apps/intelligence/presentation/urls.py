@@ -11,7 +11,14 @@ from .views import (
     HealthScoreView,
     IngestView,
     IntroductionView,
+    NLPClassificationView,
+    NLPEntityExtractionView,
+    NLPKeywordsView,
+    NLPLanguageDetectionView,
+    NLPModerationView,
     NLPSearchView,
+    NLPSentimentView,
+    NLPSimilarityView,
 )
 
 urlpatterns: list[URLPattern] = [
@@ -35,4 +42,12 @@ urlpatterns: list[URLPattern] = [
         ConnectionPrivacyView.as_view(),
         name="connections-settings",
     ),
+    # NLP endpoints (F7.3)
+    path("nlp/sentiment/analyze", NLPSentimentView.as_view(), name="nlp-sentiment"),
+    path("nlp/classification/analyze", NLPClassificationView.as_view(), name="nlp-classification"),
+    path("nlp/moderation/analyze", NLPModerationView.as_view(), name="nlp-moderation"),
+    path("nlp/entities/extract", NLPEntityExtractionView.as_view(), name="nlp-entities"),
+    path("nlp/keywords/extract", NLPKeywordsView.as_view(), name="nlp-keywords"),
+    path("nlp/language/detect", NLPLanguageDetectionView.as_view(), name="nlp-language"),
+    path("nlp/similarity/score", NLPSimilarityView.as_view(), name="nlp-similarity"),
 ]

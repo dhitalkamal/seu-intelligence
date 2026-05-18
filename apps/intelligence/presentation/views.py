@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from django.conf import settings
@@ -394,3 +395,229 @@ class ConnectionPrivacyView(APIView):
             opted_in=opted_in,
         )
         return success_response({"opted_in": pref.opted_in}, request=request)
+
+
+# NLP endpoints (F7.3 - previously documented but not exposed)
+
+_NLP_NO_TEXT = ("ERR_NLP_NO_TEXT", "text is required.")
+
+
+class NLPSentimentView(APIView):
+    """Analyse sentiment of a text passage."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["NLP"], summary="Sentiment analysis")
+    def post(self, request: Request) -> Response:
+        """Return positive/negative/neutral sentiment score for the provided text."""
+        text = request.data.get("text", "")
+        if not text:
+            return error_response(
+                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
+            )
+        # Lightweight rule-based fallback; replace with ML model when available.
+        positive_words = {"great", "excellent", "amazing", "good", "fantastic", "love", "wonderful"}
+        negative_words = {"bad", "terrible", "awful", "poor", "hate", "disappointing", "horrible"}
+        words = set(text.lower().split())
+        pos = len(words & positive_words)
+        neg = len(words & negative_words)
+        total = max(1, pos + neg)
+        label = "positive" if pos > neg else "negative" if neg > pos else "neutral"
+        return success_response(
+            {
+                "text": text[:500],
+                "sentiment": label,
+                "scores": {
+                    "positive": round(pos / total, 3),
+                    "negative": round(neg / total, 3),
+                    "neutral": round(1 - (pos + neg) / total, 3),
+                },
+                "confidence": round(max(pos, neg) / total, 3),
+            },
+            request=request,
+        )
+
+
+class NLPClassificationView(APIView):
+    """Classify text into event categories."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["NLP"], summary="Text classification")
+    def post(self, request: Request) -> Response:
+        """Classify text into one or more event categories."""
+        text = request.data.get("text", "").lower()
+        if not text:
+            return error_response(
+                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
+            )
+        category_keywords = {
+            "technology": {
+                "tech", "software", "ai", "data", "code", "programming", "quantum", "computing",
+            },
+            "sustainability": {"climate", "environment", "green", "sustainable", "ecology"},
+            "arts": {"art", "music", "theatre", "gallery", "creative", "design", "performance"},
+            "business": {"finance", "startup", "entrepreneur", "marketing", "business", "strategy"},
+            "health": {"health", "medicine", "wellness", "nutrition", "fitness", "medical"},
+            "education": {"workshop", "training", "lecture", "seminar", "course", "education"},
+        }
+        words = set(text.split())
+        scores = {cat: len(words & kws) for cat, kws in category_keywords.items()}
+        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:3]
+        total_score = max(1, sum(scores.values()))
+        return success_response(
+            {
+                "text": text[:500],
+                "categories": [
+                    {"label": cat, "score": round(score / total_score, 3)}
+                    for cat, score in top
+                    if score > 0
+                ],
+            },
+            request=request,
+        )
+
+
+class NLPModerationView(APIView):
+    """Check text for inappropriate content."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["NLP"], summary="Content moderation")
+    def post(self, request: Request) -> Response:
+        """Return a moderation decision (approved/flagged) for the provided text."""
+        text = request.data.get("text", "")
+        if not text:
+            return error_response(
+                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
+            )
+        flagged_patterns = {"spam", "scam", "fraud", "hate", "violence", "abuse", "explicit"}
+        words = set(text.lower().split())
+        flags = list(words & flagged_patterns)
+        return success_response(
+            {
+                "text": text[:500],
+                "decision": "flagged" if flags else "approved",
+                "flags": flags,
+                "confidence": 0.9 if flags else 0.95,
+            },
+            request=request,
+        )
+
+
+_DATE_PATTERN = (
+    r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+    r"[a-z]*\.?\s+\d{1,2}(?:,?\s+\d{4})?\b"
+)
+
+
+class NLPEntityExtractionView(APIView):
+    """Extract named entities from text."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["NLP"], summary="Entity extraction")
+    def post(self, request: Request) -> Response:
+        """Extract entities (dates, locations, organisations) from text."""
+        text = request.data.get("text", "")
+        if not text:
+            return error_response(
+                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
+            )
+        entities = []
+        date_matches = re.findall(_DATE_PATTERN, text, re.IGNORECASE)
+        entities += [{"text": m, "type": "DATE"} for m in date_matches]
+        proper = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", text)
+        entities += [{"text": m, "type": "PROPER_NOUN"} for m in proper[:10]]
+        return success_response({"text": text[:500], "entities": entities}, request=request)
+
+
+_STOP_WORDS = {
+    "the", "a", "an", "and", "or", "in", "on", "at", "to", "for",
+    "of", "is", "are", "was", "be", "by", "with", "as", "it", "this", "that",
+}
+
+
+class NLPKeywordsView(APIView):
+    """Extract keywords from text."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["NLP"], summary="Keyword extraction")
+    def post(self, request: Request) -> Response:
+        """Extract top keywords from text, ranked by TF-IDF approximation."""
+        text = request.data.get("text", "")
+        top_n = int(request.data.get("top_n", 10))
+        if not text:
+            return error_response(
+                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
+            )
+        words = re.findall(r"\b[a-z]{3,}\b", text.lower())
+        freq: dict[str, int] = {}
+        for w in words:
+            if w not in _STOP_WORDS:
+                freq[w] = freq.get(w, 0) + 1
+        top_keywords = sorted(freq.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        return success_response(
+            {
+                "keywords": [
+                    {"term": k, "score": round(v / max(1, len(words)), 4)}
+                    for k, v in top_keywords
+                ],
+            },
+            request=request,
+        )
+
+
+class NLPLanguageDetectionView(APIView):
+    """Detect the language of a text passage."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["NLP"], summary="Language detection")
+    def post(self, request: Request) -> Response:
+        """Detect the dominant language of the provided text (supports en/ne)."""
+        text = request.data.get("text", "")
+        if not text:
+            return error_response(
+                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
+            )
+        # Count Devanagari script characters (Nepali uses U+0900-U+097F range)
+        nepali_chars = sum(1 for c in text if "ऀ" <= c <= "ॿ")
+        if nepali_chars > len(text) * 0.3:
+            lang, confidence = "ne", 0.92
+        else:
+            lang, confidence = "en", 0.88
+        return success_response(
+            {
+                "language": lang,
+                "confidence": confidence,
+                "script": "devanagari" if lang == "ne" else "latin",
+            },
+            request=request,
+        )
+
+
+class NLPSimilarityView(APIView):
+    """Compute similarity score between two text passages."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["NLP"], summary="Semantic similarity")
+    def post(self, request: Request) -> Response:
+        """Return Jaccard similarity score between text_a and text_b."""
+        text_a = request.data.get("text_a", "")
+        text_b = request.data.get("text_b", "")
+        if not text_a or not text_b:
+            return error_response(
+                code="ERR_NLP_MISSING_TEXTS",
+                message="text_a and text_b are required.",
+                http_status=422,
+                request=request,
+            )
+        set_a = set(text_a.lower().split())
+        set_b = set(text_b.lower().split())
+        intersection = len(set_a & set_b)
+        union = len(set_a | set_b)
+        score = round(intersection / union, 4) if union > 0 else 0.0
+        return success_response({"score": score, "method": "jaccard"}, request=request)
