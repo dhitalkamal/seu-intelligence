@@ -621,3 +621,179 @@ class NLPSimilarityView(APIView):
         union = len(set_a | set_b)
         score = round(intersection / union, 4) if union > 0 else 0.0
         return success_response({"score": score, "method": "jaccard"}, request=request)
+
+
+class ChatbotView(APIView):
+    """POST /nlp/chat/ - platform-aware conversational assistant."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["NLP"],
+        summary="Platform chatbot",
+        description=(
+            "Accepts a user message and optional conversation history. "
+            "Uses the NLP pipeline to classify intent and returns a contextual reply."
+        ),
+        request=inline_serializer(
+            name="ChatRequest",
+            fields={
+                "message": serializers.CharField(),
+                "history": serializers.ListField(child=serializers.DictField(), required=False, default=list),
+            },
+        ),
+        responses={200: OpenApiResponse(description="Chatbot reply.")},
+    )
+    def post(self, request: Request) -> Response:
+        """Classify user intent, filter events from context, and return a reply."""
+        message: str = (request.data.get("message") or "").strip()
+        history: list = request.data.get("history") or []
+        context: dict = request.data.get("context") or {}
+        available_events: list = context.get("events") or []
+
+        if not message:
+            return error_response(
+                code="ERR_CHAT_EMPTY",
+                message="message is required.",
+                http_status=422,
+                request=request,
+            )
+
+        # tokenize_query returns {"keywords": [...], "language": "...", "filters": {}}
+        tokenized = tokenize_query(message)
+        tokens = [t.lower() for t in tokenized.get("keywords", [])]
+        # also add the raw lowercased words so short/stop words still match intents
+        raw_tokens = list({w.lower().strip("?.!,'\"") for w in message.split() if w.strip("?.!,'\"")})
+        all_tokens = list(set(tokens + raw_tokens))
+        intent, reply, matched_events = _classify_and_reply(message, all_tokens, history, available_events)
+
+        return success_response(
+            {"reply": reply, "intent": intent, "tokens": all_tokens, "events": matched_events},
+            request=request,
+        )
+
+
+def _score_event(event: dict, tokens: list[str]) -> int:
+    """Score an event against query tokens. Returns 0 if no match."""
+    haystack = " ".join([
+        (event.get("title") or ""),
+        (event.get("event_type") or ""),
+        (event.get("description") or ""),
+    ]).lower()
+    return sum(1 for t in tokens if len(t) > 2 and t in haystack)
+
+
+def _filter_events(events: list[dict], tokens: list[str], want_free: bool | None = None) -> list[dict]:
+    """Return up to 5 events ranked by keyword relevance, optionally filtered by is_free."""
+    scored = []
+    for e in events:
+        if want_free is True and not e.get("is_free"):
+            continue
+        if want_free is False and e.get("is_free"):
+            continue
+        score = _score_event(e, tokens)
+        scored.append((score, e))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    # return top 5; if nothing matched return first 5 as general suggestions
+    top = [e for _, e in scored if _[0] > 0][:5]
+    return top if top else [e for _, e in scored[:5]]
+
+
+def _classify_and_reply(
+    message: str,
+    tokens: list[str],
+    history: list[dict],
+    available_events: list[dict] | None = None,
+) -> tuple[str, str, list[dict]]:
+    """Map tokens to an intent bucket and return (intent, reply, events) triple."""
+    events: list[dict] = []
+    if available_events is None:
+        available_events = []
+
+    # greeting
+    if any(t in tokens for t in ("hi", "hello", "hey", "namaste", "greetings", "hola")):
+        return "greeting", "Namaste! I am Sansaar's assistant. I can help you find events, manage registration, learn about volunteering, or answer payment questions. What would you like to know?", events
+
+    # event discovery - recommend real events when available
+    is_event_intent = any(t in tokens for t in (
+        "event", "events", "happening", "upcoming", "conference", "workshop",
+        "seminar", "webinar", "festival", "recommend", "suggest", "select",
+        "show", "list", "find", "looking", "interested",
+    ))
+    if is_event_intent:
+        if any(t in tokens for t in ("create", "publish", "new", "organise", "organize", "host")):
+            return "event_create", "To create an event, go to your Org Dashboard and click New Event. Fill in the details, add a cover image, set the date and location, then publish when ready.", events
+
+        want_free: bool | None = None
+        if any(t in tokens for t in ("free", "no cost")):
+            want_free = True
+        elif any(t in tokens for t in ("paid", "ticket", "priced")):
+            want_free = False
+
+        if available_events:
+            events = _filter_events(available_events, tokens, want_free)
+            if events:
+                count = len(events)
+                qualifier = "free " if want_free else ""
+                reply = f"Here are {count} {qualifier}event{'s' if count != 1 else ''} that match your query. Click any to open the event page and register."
+                return "event_recommend", reply, events
+
+        # no events in context
+        reply = "Browse all upcoming events on the Events page. Use the search bar for natural-language queries like 'free tech events in Kathmandu' or filter by category and date."
+        return "event_discover", reply, events
+
+    # registration
+    if any(t in tokens for t in ("register", "registration", "ticket", "sign", "enrol", "enroll", "book", "attend", "join")):
+        if any(t in tokens for t in ("cancel", "refund", "withdraw")):
+            return "registration_cancel", "To cancel a registration, go to My Tickets, find the event, and click Cancel. Refund policies depend on the organiser. You can request a refund from the Finance section.", events
+        if any(t in tokens for t in ("qr", "code", "scan", "check")):
+            return "registration_qr", "Your QR code is on your ticket in My Tickets. Show it to event staff for check-in. It refreshes every 4 minutes for security.", events
+        # if registering and events are available, show relevant ones
+        if available_events:
+            events = _filter_events(available_events, tokens)[:3]
+        return "registration", "To register for an event, open the event page and click Register. For free events it is instant. For paid events you will be directed to checkout.", events
+
+    # volunteer
+    if any(t in tokens for t in ("volunteer", "volunteering", "shift", "help", "assist")):
+        if any(t in tokens for t in ("apply", "application", "how", "sign")):
+            return "volunteer_apply", "Browse volunteer roles under the Volunteer section. Click Apply on any role that interests you and leave a short message. The organiser will approve or reject your application.", events
+        return "volunteer", "The Volunteer section shows all open roles for events you are attending. You can apply, track your hours, and download certificates after completing shifts.", events
+
+    # payment
+    if any(t in tokens for t in ("pay", "payment", "price", "cost", "fee", "refund", "invoice", "billing", "subscription", "plan", "upgrade")):
+        if any(t in tokens for t in ("refund", "money", "back", "return")):
+            return "payment_refund", "To request a refund, go to Finance > My Orders, open the order, and click Request Refund. Refunds are processed within 5-7 business days depending on your gateway.", events
+        if any(t in tokens for t in ("plan", "upgrade", "starter", "pro", "enterprise", "ngo")):
+            return "payment_plans", "Sansaar offers Free, Starter (NPR 999/mo), Pro (NPR 4,999/mo), NGO (free), and Enterprise (NPR 14,999/mo) plans. Higher plans reduce platform fees and unlock advanced features.", events
+        return "payment", "Payments are handled via Khalti and eSewa for NPR transactions. Go to Finance > Billing to manage your subscription or view past orders.", events
+
+    # organisation
+    if any(t in tokens for t in ("org", "organisation", "organization", "workspace", "team", "member")):
+        if any(t in tokens for t in ("create", "new", "start", "setup")):
+            return "org_create", "To create an organisation, click New Org from your profile menu. Fill in your details, submit for verification, and our team will review within 24 hours.", events
+        if any(t in tokens for t in ("member", "team", "invite", "add")):
+            return "org_members", "You can invite team members from Org Settings. Members can have Owner, Admin, Manager, or Member roles with different permission levels.", events
+        return "org", "Your organisation workspace gives you access to event management, member management, analytics, finance, and venue booking tools.", events
+
+    # analytics
+    if any(t in tokens for t in ("analytics", "report", "stats", "statistics", "data", "insight")):
+        return "analytics", "Analytics are available per-event and at the platform level. View registrations, check-in rates, revenue breakdown, and attendee demographics from the Analytics section.", events
+
+    # search
+    if any(t in tokens for t in ("search", "discover", "explore")):
+        return "search", "Use the Search page for natural-language queries powered by our NLP engine. Try queries like 'networking events this weekend' or 'volunteer at a music festival'.", events
+
+    # help / about
+    if any(t in tokens for t in ("help", "support", "contact", "about", "sansaar", "platform", "what")):
+        return "help", "Sansaar is a multi-service event management platform. I can help with: finding events, registration, volunteering, payments, and organisation management. What would you like help with?", events
+
+    # farewell
+    if any(t in tokens for t in ("bye", "goodbye", "thanks", "thank", "great", "ok", "okay", "cool")):
+        return "farewell", "You are welcome! Feel free to ask anything else about Sansaar. Have a great day!", events
+
+    # fallback - suggest events if available
+    if available_events:
+        events = available_events[:4]
+        return "unknown", f"I am not sure about '{message}', but here are some events you might be interested in. Ask me about registration, volunteering, or payments and I will help!", events
+
+    return "unknown", f"I am not sure I understood '{message}'. I can help with events, registration, volunteering, payments, or organisation management. Could you rephrase?", events

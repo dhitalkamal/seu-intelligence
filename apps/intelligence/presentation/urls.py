@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.urls import URLPattern, path
 
 from .views import (
+    ChatbotView,
     ConnectionPrivacyView,
     ConnectionsView,
     HealthCheckView,
@@ -50,4 +51,5 @@ urlpatterns: list[URLPattern] = [
     path("nlp/keywords/extract", NLPKeywordsView.as_view(), name="nlp-keywords"),
     path("nlp/language/detect", NLPLanguageDetectionView.as_view(), name="nlp-language"),
     path("nlp/similarity/score", NLPSimilarityView.as_view(), name="nlp-similarity"),
+    path("nlp/chat/", ChatbotView.as_view(), name="nlp-chat"),
 ]

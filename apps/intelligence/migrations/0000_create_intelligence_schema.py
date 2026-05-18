@@ -8,7 +8,6 @@ from django.db import migrations
 class Migration(migrations.Migration):
     """Ensures the intelligence schema exists before any table is created."""
 
-    initial = True
     dependencies: list = []
 
     operations = [
