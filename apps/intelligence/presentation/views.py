@@ -18,6 +18,7 @@ from apps.intelligence.application.use_cases.calculate_health import CalculateHe
 from apps.intelligence.application.use_cases.get_health import GetLatestHealthScoreUseCase
 from apps.intelligence.application.use_cases.ingest_batch import IngestBatchUseCase
 from apps.intelligence.application.use_cases.ingest_event import IngestEventUseCase
+from apps.intelligence.application.use_cases.tokenize import tokenize_query
 from apps.intelligence.infrastructure.repositories import (
     DjangoAnalyticsEventRepository,
     DjangoHealthScoreRepository,
@@ -242,18 +243,22 @@ class HealthScoreView(APIView):
 
 
 class NLPSearchView(APIView):
-    """Tokenise a natural language query and return keywords."""
+    """Tokenise a natural language query in English or Nepali."""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
         tags=["NLP"],
-        summary="NLP search tokeniser",
-        description="Splits the q param on whitespace and returns tokens longer than 2 characters.",
+        summary="NLP search tokeniser (English + Nepali)",
+        description=(
+            "Detects the query language from script (Devanagari = Nepali, Latin = English), "
+            "then tokenises and filters stop words. Returns keywords, detected language, "
+            "and a filters dict for future structured extraction."
+        ),
         responses={200: OpenApiResponse(description="Keywords extracted.")},
     )
     def get(self, request: Request) -> Response:
-        """Return tokenised keywords from the q query parameter."""
+        """Tokenise the q query parameter using the appropriate language handler."""
         query = request.query_params.get("q", "")
-        keywords = [t for t in query.split() if len(t) > 2]
-        return success_response({"keywords": keywords, "filters": {}}, request=request)
+        result = tokenize_query(query)
+        return success_response(result, request=request)
