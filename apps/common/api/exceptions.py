@@ -1,4 +1,5 @@
 """Exception handler and base domain error class."""
+
 from __future__ import annotations
 
 import uuid
@@ -74,17 +75,32 @@ def api_exception_handler(exc: Exception, context: dict) -> Response | None:
         )
     if http_status == status.HTTP_401_UNAUTHORIZED:
         return Response(
-            _body("ERR_AUTH_UNAUTHORIZED", _extract(data, "Authentication credentials were not provided."), None, request),
+            _body(
+                "ERR_AUTH_UNAUTHORIZED",
+                _extract(data, "Authentication credentials were not provided."),
+                None,
+                request,
+            ),
             status=401,
         )
     if http_status == status.HTTP_403_FORBIDDEN:
         return Response(
-            _body("ERR_PERMISSION_DENIED", _extract(data, "You do not have permission to perform this action."), None, request),
+            _body(
+                "ERR_PERMISSION_DENIED",
+                _extract(data, "You do not have permission to perform this action."),
+                None,
+                request,
+            ),
             status=403,
         )
     if http_status == status.HTTP_404_NOT_FOUND:
         return Response(
-            _body("ERR_RESOURCE_NOT_FOUND", _extract(data, "The requested resource was not found."), None, request),
+            _body(
+                "ERR_RESOURCE_NOT_FOUND",
+                _extract(data, "The requested resource was not found."),
+                None,
+                request,
+            ),
             status=404,
         )
     if http_status == status.HTTP_405_METHOD_NOT_ALLOWED:
@@ -94,7 +110,9 @@ def api_exception_handler(exc: Exception, context: dict) -> Response | None:
         )
     if http_status == status.HTTP_429_TOO_MANY_REQUESTS:
         return Response(
-            _body("ERR_RATE_LIMIT_EXCEEDED", _extract(data, "Request was throttled."), None, request),
+            _body(
+                "ERR_RATE_LIMIT_EXCEEDED", _extract(data, "Request was throttled."), None, request
+            ),
             status=429,
         )
     return Response(

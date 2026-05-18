@@ -1,4 +1,5 @@
 """Standard pagination class used across all list endpoints."""
+
 from __future__ import annotations
 
 from rest_framework.pagination import PageNumberPagination

@@ -1,4 +1,5 @@
 """Standard response helpers following the project API contract."""
+
 from __future__ import annotations
 
 import uuid
