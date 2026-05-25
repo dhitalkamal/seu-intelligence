@@ -11,8 +11,9 @@ from apps.intelligence.domain.entities import (
     ConnectionPrivacyEntity,
     HealthPingEntity,
     HealthScoreEntity,
+    ReportJobEntity,
 )
-from apps.intelligence.domain.exceptions import HealthScoreNotFoundError, MatchNotFoundError
+from apps.intelligence.domain.exceptions import HealthScoreNotFoundError, MatchNotFoundError, ReportJobNotFoundError
 from apps.intelligence.domain.repositories import (
     IAnalyticsEventQueryRepository,
     IAnalyticsEventRepository,
@@ -20,6 +21,7 @@ from apps.intelligence.domain.repositories import (
     IConnectionPrivacyRepository,
     IHealthPingRepository,
     IHealthScoreRepository,
+    IReportJobRepository,
 )
 from apps.intelligence.infrastructure.models import (
     AnalyticsEvent,
@@ -27,6 +29,7 @@ from apps.intelligence.infrastructure.models import (
     ConnectionPrivacy,
     EventHealthScore,
     HealthPing,
+    ReportJob,
 )
 
 
@@ -172,3 +175,30 @@ class DjangoHealthPingRepository(IHealthPingRepository):
         """Remove all rows older than cutoff, return count deleted."""
         count, _ = HealthPing.objects.filter(checked_at__lt=cutoff).delete()
         return count
+
+
+class DjangoReportJobRepository(IReportJobRepository):
+    """Persists ReportJob entities using the Django ORM."""
+
+    def create(self, entity: ReportJobEntity) -> ReportJobEntity:
+        """Persist a new job and return it."""
+        obj = ReportJob.from_entity(entity)
+        obj.save(using="default")
+        return obj.to_entity()
+
+    def get_by_id(self, job_id: uuid.UUID) -> ReportJobEntity:
+        """Return the job or raise ReportJobNotFoundError."""
+        try:
+            obj = ReportJob.objects.get(id=job_id)
+        except ReportJob.DoesNotExist:
+            raise ReportJobNotFoundError(f"Report job {job_id} not found.")
+        return obj.to_entity()
+
+    def update(self, entity: ReportJobEntity) -> ReportJobEntity:
+        """Overwrite status, file_url, and completed_at on the stored row."""
+        ReportJob.objects.filter(id=entity.id).update(
+            status=entity.status,
+            file_url=entity.file_url,
+            completed_at=entity.completed_at,
+        )
+        return entity

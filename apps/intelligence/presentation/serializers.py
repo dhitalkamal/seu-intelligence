@@ -56,3 +56,24 @@ class HealthPingResponseSerializer(serializers.Serializer):
     latency_ms = serializers.IntegerField()
     details = serializers.DictField()
     checked_at = serializers.DateTimeField()
+
+
+class GenerateReportInputSerializer(serializers.Serializer):
+    """Request body for creating a new report job."""
+
+    report_type = serializers.ChoiceField(choices=["attendee_list", "revenue", "registrations"])
+    filters = serializers.JSONField(required=False, default=dict)
+    format = serializers.ChoiceField(choices=["csv", "excel", "pdf"])
+
+
+class ReportJobResponseSerializer(serializers.Serializer):
+    """Public shape of a report job resource."""
+
+    id = serializers.UUIDField()
+    requested_by = serializers.UUIDField()
+    report_type = serializers.CharField()
+    format = serializers.CharField()
+    status = serializers.CharField()
+    file_url = serializers.CharField(allow_null=True)
+    created_at = serializers.DateTimeField()
+    completed_at = serializers.DateTimeField(allow_null=True)

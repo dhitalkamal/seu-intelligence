@@ -78,3 +78,18 @@ class HealthPingEntity:
     latency_ms: int
     checked_at: datetime
     details: dict = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ReportJobEntity:
+    """A single async report generation job."""
+
+    id: uuid.UUID
+    requested_by: uuid.UUID
+    report_type: str
+    filters: dict
+    format: str
+    status: str
+    created_at: datetime
+    file_url: str | None = None
+    completed_at: datetime | None = None

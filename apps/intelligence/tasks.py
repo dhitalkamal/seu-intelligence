@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import time
+import uuid
 from datetime import datetime, timezone
 
 import requests
@@ -150,3 +153,84 @@ def ping_all_services() -> dict:
     deleted = CleanupHealthPingsUseCase(repo).execute()
 
     return {"stored": count, "cleaned": deleted}
+
+
+def _build_csv(filters: dict) -> bytes:
+    """Generate a minimal CSV report. Placeholder until real data queries land."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["report_type", "generated_at"])
+    writer.writerow(["attendee_list", datetime.now(timezone.utc).isoformat()])
+    return buf.getvalue().encode()
+
+
+def _build_excel(filters: dict) -> bytes:
+    """Generate a minimal Excel report using openpyxl."""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["report_type", "generated_at"])
+    ws.append(["attendee_list", datetime.now(timezone.utc).isoformat()])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _build_pdf(filters: dict) -> bytes:
+    """Generate a minimal PDF report using reportlab."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    c.drawString(72, 750, f"Report generated at {datetime.now(timezone.utc).isoformat()}")
+    c.save()
+    return buf.getvalue()
+
+
+_FORMAT_BUILDERS = {
+    "csv": (_build_csv, "text/csv", "csv"),
+    "excel": (_build_excel, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"),
+    "pdf": (_build_pdf, "application/pdf", "pdf"),
+}
+
+
+def _run_generate_report(
+    *,
+    job_id: uuid.UUID,
+    repo: object,
+    storage: object,
+) -> None:
+    """Core report-generation logic extracted for testability without Celery."""
+    from apps.intelligence.domain.repositories import IReportJobRepository, IReportStorage
+
+    assert isinstance(repo, IReportJobRepository)
+    assert isinstance(storage, IReportStorage)
+
+    job = repo.get_by_id(job_id)
+
+    build_fn, content_type, ext = _FORMAT_BUILDERS.get(job.format, _FORMAT_BUILDERS["csv"])
+    payload = build_fn(job.filters)
+
+    file_key = f"reports/{job.id}.{ext}"
+    storage.upload(file_key, payload, content_type)
+
+    from dataclasses import replace as dc_replace
+
+    updated = dc_replace(job, status="completed", file_url=file_key, completed_at=datetime.now(timezone.utc))
+    repo.update(updated)
+
+
+@shared_task(name="intelligence.generate_report")
+def generate_report_task(job_id_str: str) -> dict:
+    """Celery entry point: generate and upload the report file, then mark job completed."""
+    from apps.intelligence.infrastructure.repositories import DjangoReportJobRepository
+    from apps.intelligence.infrastructure.storage import MinioReportStorage
+
+    _run_generate_report(
+        job_id=uuid.UUID(job_id_str),
+        repo=DjangoReportJobRepository(),
+        storage=MinioReportStorage(),
+    )
+    return {"job_id": job_id_str, "status": "completed"}

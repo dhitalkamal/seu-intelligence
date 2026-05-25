@@ -12,6 +12,7 @@ from apps.intelligence.domain.entities import (
     ConnectionPrivacyEntity,
     HealthPingEntity,
     HealthScoreEntity,
+    ReportJobEntity,
 )
 
 
@@ -90,3 +91,26 @@ class IHealthPingRepository(ABC):
 
     @abstractmethod
     def delete_older_than(self, cutoff: datetime) -> int: ...
+
+
+class IReportJobRepository(ABC):
+    """Persistence contract for report generation jobs."""
+
+    @abstractmethod
+    def create(self, entity: ReportJobEntity) -> ReportJobEntity: ...
+
+    @abstractmethod
+    def get_by_id(self, job_id: uuid.UUID) -> ReportJobEntity: ...
+
+    @abstractmethod
+    def update(self, entity: ReportJobEntity) -> ReportJobEntity: ...
+
+
+class IReportStorage(ABC):
+    """Storage abstraction for generating presigned download URLs."""
+
+    @abstractmethod
+    def upload(self, file_key: str, content: bytes, content_type: str) -> None: ...
+
+    @abstractmethod
+    def generate_presigned_url(self, file_key: str, expires_in: int = 3600) -> str: ...
