@@ -9,6 +9,7 @@ from apps.intelligence.domain.entities import (
     AnalyticsEventEntity,
     AttendeeMatchEntity,
     ConnectionPrivacyEntity,
+    HealthPingEntity,
     HealthScoreEntity,
 )
 from apps.intelligence.domain.exceptions import HealthScoreNotFoundError, MatchNotFoundError
@@ -17,6 +18,7 @@ from apps.intelligence.domain.repositories import (
     IAnalyticsEventRepository,
     IAttendeeMatchRepository,
     IConnectionPrivacyRepository,
+    IHealthPingRepository,
     IHealthScoreRepository,
 )
 from apps.intelligence.infrastructure.models import (
@@ -24,6 +26,7 @@ from apps.intelligence.infrastructure.models import (
     AttendeeMatch,
     ConnectionPrivacy,
     EventHealthScore,
+    HealthPing,
 )
 
 
@@ -63,29 +66,20 @@ class DjangoHealthScoreRepository(IHealthScoreRepository):
 class DjangoAttendeeMatchRepository(IAttendeeMatchRepository):
     """Persists AttendeeMatch entities using the Django ORM."""
 
-    def get_matches_for_user(
-        self, event_id: uuid.UUID, user_id: uuid.UUID
-    ) -> list[AttendeeMatchEntity]:
+    def get_matches_for_user(self, event_id: uuid.UUID, user_id: uuid.UUID) -> list[AttendeeMatchEntity]:
         """Return all match records where the user appears on either side."""
         from django.db.models import Q
 
-        qs = AttendeeMatch.objects.filter(
-            Q(user_id_a=user_id) | Q(user_id_b=user_id), event_id=event_id
-        ).order_by("-match_score")
+        qs = AttendeeMatch.objects.filter(Q(user_id_a=user_id) | Q(user_id_b=user_id), event_id=event_id).order_by("-match_score")
         return [obj.to_entity() for obj in qs]
 
-    def get_pair(
-        self, event_id: uuid.UUID, user_id_a: uuid.UUID, user_id_b: uuid.UUID
-    ) -> AttendeeMatchEntity | None:
+    def get_pair(self, event_id: uuid.UUID, user_id_a: uuid.UUID, user_id_b: uuid.UUID) -> AttendeeMatchEntity | None:
         """Return the match between two users or None."""
         from django.db.models import Q
 
         obj = (
             AttendeeMatch.objects.filter(event_id=event_id)
-            .filter(
-                Q(user_id_a=user_id_a, user_id_b=user_id_b)
-                | Q(user_id_a=user_id_b, user_id_b=user_id_a)
-            )
+            .filter(Q(user_id_a=user_id_a, user_id_b=user_id_b) | Q(user_id_a=user_id_b, user_id_b=user_id_a))
             .first()
         )
         return obj.to_entity() if obj else None
@@ -108,11 +102,7 @@ class DjangoAttendeeMatchRepository(IAttendeeMatchRepository):
 
     def list_user_ids_for_event(self, event_id: uuid.UUID) -> list[uuid.UUID]:
         """Return distinct user_ids registered at this event via analytics events."""
-        ids = (
-            AnalyticsEvent.objects.filter(event_id=event_id, user_id__isnull=False)
-            .values_list("user_id", flat=True)
-            .distinct()
-        )
+        ids = AnalyticsEvent.objects.filter(event_id=event_id, user_id__isnull=False).values_list("user_id", flat=True).distinct()
         return list(ids)
 
 
@@ -132,9 +122,7 @@ class DjangoConnectionPrivacyRepository(IConnectionPrivacyRepository):
 
     def upsert(self, entity: ConnectionPrivacyEntity) -> ConnectionPrivacyEntity:
         """Persist updated preference."""
-        ConnectionPrivacy.objects.filter(user_id=entity.user_id, event_id=entity.event_id).update(
-            opted_in=entity.opted_in
-        )
+        ConnectionPrivacy.objects.filter(user_id=entity.user_id, event_id=entity.event_id).update(opted_in=entity.opted_in)
         return entity
 
 
@@ -143,9 +131,44 @@ class DjangoAnalyticsEventQueryRepository(IAnalyticsEventQueryRepository):
 
     def get_event_ids_for_user(self, user_id: uuid.UUID) -> list[uuid.UUID]:
         """Return all event_ids the user appeared in across analytics events."""
-        ids = (
-            AnalyticsEvent.objects.filter(user_id=user_id, event_id__isnull=False)
-            .values_list("event_id", flat=True)
-            .distinct()
-        )
+        ids = AnalyticsEvent.objects.filter(user_id=user_id, event_id__isnull=False).values_list("event_id", flat=True).distinct()
         return list(ids)
+
+
+class DjangoHealthPingRepository(IHealthPingRepository):
+    """Persists HealthPing records using the Django ORM."""
+
+    def bulk_create(self, entities: list[HealthPingEntity]) -> int:
+        """Batch-insert ping results and return count."""
+        objs = [HealthPing.from_entity(e) for e in entities]
+        HealthPing.objects.bulk_create(objs)
+        return len(objs)
+
+    def get_history(
+        self,
+        *,
+        service_name: str | None = None,
+        since: datetime | None = None,
+    ) -> list[HealthPingEntity]:
+        """Return ping records filtered by service and/or time window."""
+        qs = HealthPing.objects.all()
+        if service_name:
+            qs = qs.filter(service_name=service_name)
+        if since:
+            qs = qs.filter(checked_at__gte=since)
+        return [obj.to_entity() for obj in qs.order_by("checked_at")]
+
+    def get_latest_round(self) -> list[HealthPingEntity]:
+        """Return the most recent ping for each service."""
+        from django.db.models import Max
+
+        latest_ts = HealthPing.objects.aggregate(latest=Max("checked_at"))["latest"]
+        if latest_ts is None:
+            return []
+        qs = HealthPing.objects.filter(checked_at=latest_ts)
+        return [obj.to_entity() for obj in qs]
+
+    def delete_older_than(self, cutoff: datetime) -> int:
+        """Remove all rows older than cutoff, return count deleted."""
+        count, _ = HealthPing.objects.filter(checked_at__lt=cutoff).delete()
+        return count

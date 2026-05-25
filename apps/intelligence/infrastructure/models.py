@@ -11,6 +11,7 @@ from apps.intelligence.domain.entities import (
     AnalyticsEventEntity,
     AttendeeMatchEntity,
     ConnectionPrivacyEntity,
+    HealthPingEntity,
     HealthScoreEntity,
 )
 
@@ -26,14 +27,14 @@ class AnalyticsEvent(models.Model):
                 name="idx_analytics_event_event",
             ),
             models.Index(
-                fields=["organisation_id", "-occurred_at"],
+                fields=["organization_id", "-occurred_at"],
                 name="idx_analytics_org",
             ),
         ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event_id = models.UUIDField(null=True, blank=True)
-    organisation_id = models.UUIDField(null=True, blank=True)
+    organization_id = models.UUIDField(null=True, blank=True)
     user_id = models.UUIDField(null=True, blank=True)
     event_type = models.CharField(max_length=50)
     value = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -51,7 +52,7 @@ class AnalyticsEvent(models.Model):
             occurred_at=self.occurred_at,
             created_at=self.created_at,
             event_id=self.event_id,
-            organisation_id=self.organisation_id,
+            organization_id=self.organization_id,
             user_id=self.user_id,
             value=self.value,
             payload=self.payload,
@@ -66,7 +67,7 @@ class AnalyticsEvent(models.Model):
             source_service=entity.source_service,
             occurred_at=entity.occurred_at,
             event_id=entity.event_id,
-            organisation_id=entity.organisation_id,
+            organization_id=entity.organization_id,
             user_id=entity.user_id,
             value=entity.value,
             payload=entity.payload,
@@ -83,9 +84,7 @@ class EventHealthScore(models.Model):
     event_id = models.UUIDField()
     score = models.SmallIntegerField()
     level = models.CharField(max_length=20)
-    registration_velocity = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0")
-    )
+    registration_velocity = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
     conversion_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
     revenue_progress = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
     predicted_attendance = models.IntegerField(default=0)
@@ -213,4 +212,54 @@ class ConnectionPrivacy(models.Model):
             user_id=entity.user_id,
             event_id=entity.event_id,
             opted_in=entity.opted_in,
+        )
+
+
+class HealthPing(models.Model):
+    """A single health check result for a service or infra dependency."""
+
+    class Meta:
+        db_table = '"intelligence"."health_ping"'
+        indexes = [
+            models.Index(
+                fields=["service_name", "-checked_at"],
+                name="idx_health_ping_service",
+            ),
+            models.Index(
+                fields=["-checked_at"],
+                name="idx_health_ping_time",
+            ),
+        ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    service_name = models.CharField(max_length=50)
+    service_type = models.CharField(max_length=20)
+    status = models.CharField(max_length=20)
+    latency_ms = models.IntegerField()
+    details = models.JSONField(default=dict)
+    checked_at = models.DateTimeField()
+
+    def to_entity(self) -> HealthPingEntity:
+        """Map this ORM row to a pure-Python HealthPingEntity."""
+        return HealthPingEntity(
+            id=self.id,
+            service_name=self.service_name,
+            service_type=self.service_type,
+            status=self.status,
+            latency_ms=self.latency_ms,
+            details=self.details or {},
+            checked_at=self.checked_at,
+        )
+
+    @classmethod
+    def from_entity(cls, entity: HealthPingEntity) -> "HealthPing":
+        """Build an unsaved ORM instance from a HealthPingEntity."""
+        return cls(
+            id=entity.id,
+            service_name=entity.service_name,
+            service_type=entity.service_type,
+            status=entity.status,
+            latency_ms=entity.latency_ms,
+            details=entity.details,
+            checked_at=entity.checked_at,
         )

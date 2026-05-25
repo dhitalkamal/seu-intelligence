@@ -1,4 +1,5 @@
 """Development settings for the intelligence-service: debug on, HS256 JWT."""
+
 from __future__ import annotations
 
 from decouple import config

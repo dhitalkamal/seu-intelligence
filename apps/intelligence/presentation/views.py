@@ -18,6 +18,7 @@ from apps.common.health import check_database, check_rabbitmq, check_redis
 from apps.intelligence.application.use_cases.calculate_health import CalculateHealthScoreUseCase
 from apps.intelligence.application.use_cases.get_connections import GetConnectionsUseCase
 from apps.intelligence.application.use_cases.get_health import GetLatestHealthScoreUseCase
+from apps.intelligence.application.use_cases.get_health_history import GetHealthHistoryUseCase, GetLatestHealthRoundUseCase
 from apps.intelligence.application.use_cases.get_privacy import GetPrivacyUseCase
 from apps.intelligence.application.use_cases.ingest_batch import IngestBatchUseCase
 from apps.intelligence.application.use_cases.ingest_event import IngestEventUseCase
@@ -30,9 +31,11 @@ from apps.intelligence.infrastructure.repositories import (
     DjangoAnalyticsEventRepository,
     DjangoAttendeeMatchRepository,
     DjangoConnectionPrivacyRepository,
+    DjangoHealthPingRepository,
     DjangoHealthScoreRepository,
 )
 from apps.intelligence.presentation.serializers import (
+    HealthPingResponseSerializer,
     HealthScoreInputSerializer,
     HealthScoreResponseSerializer,
     IngestEventSerializer,
@@ -57,6 +60,10 @@ _ANALYTICS_QUERY_REPO = DjangoAnalyticsEventQueryRepository
 _INGEST_SER = IngestEventSerializer
 _HEALTH_INPUT_SER = HealthScoreInputSerializer
 _HEALTH_RESP_SER = HealthScoreResponseSerializer
+_PING_REPO = DjangoHealthPingRepository
+_PING_HISTORY_UC = GetHealthHistoryUseCase
+_PING_LATEST_UC = GetLatestHealthRoundUseCase
+_PING_RESP_SER = HealthPingResponseSerializer
 
 _CHECKS = inline_serializer(
     name="DependencyChecks",
@@ -85,8 +92,7 @@ class HealthCheckView(APIView):
         tags=["Health"],
         summary="Service health check",
         description=(
-            "Checks connectivity to PostgreSQL, Redis, and RabbitMQ. "
-            "Returns 200 when all dependencies are healthy, 503 when any are down."
+            "Checks connectivity to PostgreSQL, Redis, and RabbitMQ. Returns 200 when all dependencies are healthy, 503 when any are down."
         ),
         auth=[],
         responses={
@@ -180,10 +186,7 @@ class IngestView(APIView):
     @extend_schema(
         tags=["Analytics"],
         summary="Ingest analytics event(s)",
-        description=(
-            "Submit a single event object to get back an id, "
-            "or submit a JSON array to bulk-ingest and get back a count."
-        ),
+        description=("Submit a single event object to get back an id, or submit a JSON array to bulk-ingest and get back a count."),
         request=_INGEST_SER,
         responses={
             201: OpenApiResponse(description="Event(s) ingested."),
@@ -206,7 +209,7 @@ class IngestView(APIView):
             source_service=d["source_service"],
             occurred_at=d["occurred_at"],
             event_id=d["event_id"],
-            organisation_id=d["organisation_id"],
+            organization_id=d["organization_id"],
             user_id=d["user_id"],
             value=d["value"],
             payload=d["payload"],
@@ -301,17 +304,15 @@ class ConnectionsView(APIView):
     def get(self, request: Request, event_id: uuid.UUID) -> Response:
         """Return ranked Who to Meet suggestions for the authenticated user."""
         try:
-            matches = _GET_CONNECTIONS_UC(
-                _MATCH_REPO(), _PRIVACY_REPO(), _ANALYTICS_QUERY_REPO()
-            ).execute(event_id=event_id, requesting_user_id=uuid.UUID(str(request.user.id)))
+            matches = _GET_CONNECTIONS_UC(_MATCH_REPO(), _PRIVACY_REPO(), _ANALYTICS_QUERY_REPO()).execute(
+                event_id=event_id, requesting_user_id=uuid.UUID(str(request.user.id))
+            )
         except OptInRequiredError as exc:
             return error_response(code=exc.code, message=str(exc), http_status=403, request=request)
         data = [
             {
                 "match_id": str(m.id),
-                "user_id": str(
-                    m.user_id_b if m.user_id_a == uuid.UUID(str(request.user.id)) else m.user_id_a
-                ),
+                "user_id": str(m.user_id_b if m.user_id_a == uuid.UUID(str(request.user.id)) else m.user_id_a),
                 "match_score": str(m.match_score),
                 "match_signals": m.match_signals,
                 "is_introduced": m.is_introduced,
@@ -367,12 +368,8 @@ class ConnectionPrivacyView(APIView):
     )
     def get(self, request: Request, event_id: uuid.UUID) -> Response:
         """Return the current opt-in preference for this user and event."""
-        pref = _GET_PRIVACY_UC(_PRIVACY_REPO()).execute(
-            user_id=uuid.UUID(str(request.user.id)), event_id=event_id
-        )
-        return success_response(
-            {"opted_in": pref.opted_in, "event_id": str(event_id)}, request=request
-        )
+        pref = _GET_PRIVACY_UC(_PRIVACY_REPO()).execute(user_id=uuid.UUID(str(request.user.id)), event_id=event_id)
+        return success_response({"opted_in": pref.opted_in, "event_id": str(event_id)}, request=request)
 
     @extend_schema(
         tags=["Who to Meet"],
@@ -412,9 +409,7 @@ class NLPSentimentView(APIView):
         """Return positive/negative/neutral sentiment score for the provided text."""
         text = request.data.get("text", "")
         if not text:
-            return error_response(
-                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
-            )
+            return error_response(code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request)
         # Lightweight rule-based fallback; replace with ML model when available.
         positive_words = {"great", "excellent", "amazing", "good", "fantastic", "love", "wonderful"}
         negative_words = {"bad", "terrible", "awful", "poor", "hate", "disappointing", "horrible"}
@@ -448,12 +443,17 @@ class NLPClassificationView(APIView):
         """Classify text into one or more event categories."""
         text = request.data.get("text", "").lower()
         if not text:
-            return error_response(
-                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
-            )
+            return error_response(code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request)
         category_keywords = {
             "technology": {
-                "tech", "software", "ai", "data", "code", "programming", "quantum", "computing",
+                "tech",
+                "software",
+                "ai",
+                "data",
+                "code",
+                "programming",
+                "quantum",
+                "computing",
             },
             "sustainability": {"climate", "environment", "green", "sustainable", "ecology"},
             "arts": {"art", "music", "theatre", "gallery", "creative", "design", "performance"},
@@ -468,11 +468,7 @@ class NLPClassificationView(APIView):
         return success_response(
             {
                 "text": text[:500],
-                "categories": [
-                    {"label": cat, "score": round(score / total_score, 3)}
-                    for cat, score in top
-                    if score > 0
-                ],
+                "categories": [{"label": cat, "score": round(score / total_score, 3)} for cat, score in top if score > 0],
             },
             request=request,
         )
@@ -488,9 +484,7 @@ class NLPModerationView(APIView):
         """Return a moderation decision (approved/flagged) for the provided text."""
         text = request.data.get("text", "")
         if not text:
-            return error_response(
-                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
-            )
+            return error_response(code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request)
         flagged_patterns = {"spam", "scam", "fraud", "hate", "violence", "abuse", "explicit"}
         words = set(text.lower().split())
         flags = list(words & flagged_patterns)
@@ -518,12 +512,10 @@ class NLPEntityExtractionView(APIView):
 
     @extend_schema(tags=["NLP"], summary="Entity extraction")
     def post(self, request: Request) -> Response:
-        """Extract entities (dates, locations, organisations) from text."""
+        """Extract entities (dates, locations, organizations) from text."""
         text = request.data.get("text", "")
         if not text:
-            return error_response(
-                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
-            )
+            return error_response(code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request)
         entities = []
         date_matches = re.findall(_DATE_PATTERN, text, re.IGNORECASE)
         entities += [{"text": m, "type": "DATE"} for m in date_matches]
@@ -533,8 +525,27 @@ class NLPEntityExtractionView(APIView):
 
 
 _STOP_WORDS = {
-    "the", "a", "an", "and", "or", "in", "on", "at", "to", "for",
-    "of", "is", "are", "was", "be", "by", "with", "as", "it", "this", "that",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "of",
+    "is",
+    "are",
+    "was",
+    "be",
+    "by",
+    "with",
+    "as",
+    "it",
+    "this",
+    "that",
 }
 
 
@@ -549,9 +560,7 @@ class NLPKeywordsView(APIView):
         text = request.data.get("text", "")
         top_n = int(request.data.get("top_n", 10))
         if not text:
-            return error_response(
-                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
-            )
+            return error_response(code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request)
         words = re.findall(r"\b[a-z]{3,}\b", text.lower())
         freq: dict[str, int] = {}
         for w in words:
@@ -560,10 +569,7 @@ class NLPKeywordsView(APIView):
         top_keywords = sorted(freq.items(), key=lambda x: x[1], reverse=True)[:top_n]
         return success_response(
             {
-                "keywords": [
-                    {"term": k, "score": round(v / max(1, len(words)), 4)}
-                    for k, v in top_keywords
-                ],
+                "keywords": [{"term": k, "score": round(v / max(1, len(words)), 4)} for k, v in top_keywords],
             },
             request=request,
         )
@@ -579,9 +585,7 @@ class NLPLanguageDetectionView(APIView):
         """Detect the dominant language of the provided text (supports en/ne)."""
         text = request.data.get("text", "")
         if not text:
-            return error_response(
-                code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request
-            )
+            return error_response(code=_NLP_NO_TEXT[0], message=_NLP_NO_TEXT[1], http_status=422, request=request)
         # Count Devanagari script characters (Nepali uses U+0900-U+097F range)
         nepali_chars = sum(1 for c in text if "ऀ" <= c <= "ॿ")
         if nepali_chars > len(text) * 0.3:
@@ -675,11 +679,13 @@ class ChatbotView(APIView):
 
 def _score_event(event: dict, tokens: list[str]) -> int:
     """Score an event against query tokens. Returns 0 if no match."""
-    haystack = " ".join([
-        (event.get("title") or ""),
-        (event.get("event_type") or ""),
-        (event.get("description") or ""),
-    ]).lower()
+    haystack = " ".join(
+        [
+            (event.get("title") or ""),
+            (event.get("event_type") or ""),
+            (event.get("description") or ""),
+        ]
+    ).lower()
     return sum(1 for t in tokens if len(t) > 2 and t in haystack)
 
 
@@ -712,17 +718,42 @@ def _classify_and_reply(
 
     # greeting
     if any(t in tokens for t in ("hi", "hello", "hey", "namaste", "greetings", "hola")):
-        return "greeting", "Namaste! I am Sansaar's assistant. I can help you find events, manage registration, learn about volunteering, or answer payment questions. What would you like to know?", events
+        return (
+            "greeting",
+            "Namaste! I am Sansaar's assistant. I can help you find events, manage registration, learn about volunteering, or answer payment questions. What would you like to know?",
+            events,
+        )
 
     # event discovery - recommend real events when available
-    is_event_intent = any(t in tokens for t in (
-        "event", "events", "happening", "upcoming", "conference", "workshop",
-        "seminar", "webinar", "festival", "recommend", "suggest", "select",
-        "show", "list", "find", "looking", "interested",
-    ))
+    is_event_intent = any(
+        t in tokens
+        for t in (
+            "event",
+            "events",
+            "happening",
+            "upcoming",
+            "conference",
+            "workshop",
+            "seminar",
+            "webinar",
+            "festival",
+            "recommend",
+            "suggest",
+            "select",
+            "show",
+            "list",
+            "find",
+            "looking",
+            "interested",
+        )
+    )
     if is_event_intent:
         if any(t in tokens for t in ("create", "publish", "new", "organise", "organize", "host")):
-            return "event_create", "To create an event, go to your Org Dashboard and click New Event. Fill in the details, add a cover image, set the date and location, then publish when ready.", events
+            return (
+                "event_create",
+                "To create an event, go to your Org Dashboard and click New Event. Fill in the details, add a cover image, set the date and location, then publish when ready.",
+                events,
+            )
 
         want_free: bool | None = None
         if any(t in tokens for t in ("free", "no cost")):
@@ -745,47 +776,105 @@ def _classify_and_reply(
     # registration
     if any(t in tokens for t in ("register", "registration", "ticket", "sign", "enrol", "enroll", "book", "attend", "join")):
         if any(t in tokens for t in ("cancel", "refund", "withdraw")):
-            return "registration_cancel", "To cancel a registration, go to My Tickets, find the event, and click Cancel. Refund policies depend on the organiser. You can request a refund from the Finance section.", events
+            return (
+                "registration_cancel",
+                "To cancel a registration, go to My Tickets, find the event, and click Cancel. Refund policies depend on the organiser. You can request a refund from the Finance section.",
+                events,
+            )
         if any(t in tokens for t in ("qr", "code", "scan", "check")):
-            return "registration_qr", "Your QR code is on your ticket in My Tickets. Show it to event staff for check-in. It refreshes every 4 minutes for security.", events
+            return (
+                "registration_qr",
+                "Your QR code is on your ticket in My Tickets. Show it to event staff for check-in. It refreshes every 4 minutes for security.",
+                events,
+            )
         # if registering and events are available, show relevant ones
         if available_events:
             events = _filter_events(available_events, tokens)[:3]
-        return "registration", "To register for an event, open the event page and click Register. For free events it is instant. For paid events you will be directed to checkout.", events
+        return (
+            "registration",
+            "To register for an event, open the event page and click Register. For free events it is instant. For paid events you will be directed to checkout.",
+            events,
+        )
 
     # volunteer
     if any(t in tokens for t in ("volunteer", "volunteering", "shift", "help", "assist")):
         if any(t in tokens for t in ("apply", "application", "how", "sign")):
-            return "volunteer_apply", "Browse volunteer roles under the Volunteer section. Click Apply on any role that interests you and leave a short message. The organiser will approve or reject your application.", events
-        return "volunteer", "The Volunteer section shows all open roles for events you are attending. You can apply, track your hours, and download certificates after completing shifts.", events
+            return (
+                "volunteer_apply",
+                "Browse volunteer roles under the Volunteer section. Click Apply on any role that interests you and leave a short message. The organiser will approve or reject your application.",
+                events,
+            )
+        return (
+            "volunteer",
+            "The Volunteer section shows all open roles for events you are attending. You can apply, track your hours, and download certificates after completing shifts.",
+            events,
+        )
 
     # payment
-    if any(t in tokens for t in ("pay", "payment", "price", "cost", "fee", "refund", "invoice", "billing", "subscription", "plan", "upgrade")):
+    if any(
+        t in tokens for t in ("pay", "payment", "price", "cost", "fee", "refund", "invoice", "billing", "subscription", "plan", "upgrade")
+    ):
         if any(t in tokens for t in ("refund", "money", "back", "return")):
-            return "payment_refund", "To request a refund, go to Finance > My Orders, open the order, and click Request Refund. Refunds are processed within 5-7 business days depending on your gateway.", events
+            return (
+                "payment_refund",
+                "To request a refund, go to Finance > My Orders, open the order, and click Request Refund. Refunds are processed within 5-7 business days depending on your gateway.",
+                events,
+            )
         if any(t in tokens for t in ("plan", "upgrade", "starter", "pro", "enterprise", "ngo")):
-            return "payment_plans", "Sansaar offers Free, Starter (NPR 999/mo), Pro (NPR 4,999/mo), NGO (free), and Enterprise (NPR 14,999/mo) plans. Higher plans reduce platform fees and unlock advanced features.", events
-        return "payment", "Payments are handled via Khalti and eSewa for NPR transactions. Go to Finance > Billing to manage your subscription or view past orders.", events
+            return (
+                "payment_plans",
+                "Sansaar offers Free, Starter (NPR 999/mo), Pro (NPR 4,999/mo), NGO (free), and Enterprise (NPR 14,999/mo) plans. Higher plans reduce platform fees and unlock advanced features.",
+                events,
+            )
+        return (
+            "payment",
+            "Payments are handled via Khalti and eSewa for NPR transactions. Go to Finance > Billing to manage your subscription or view past orders.",
+            events,
+        )
 
-    # organisation
-    if any(t in tokens for t in ("org", "organisation", "organization", "workspace", "team", "member")):
+    # organization
+    if any(t in tokens for t in ("org", "organization", "organization", "workspace", "team", "member")):
         if any(t in tokens for t in ("create", "new", "start", "setup")):
-            return "org_create", "To create an organisation, click New Org from your profile menu. Fill in your details, submit for verification, and our team will review within 24 hours.", events
+            return (
+                "org_create",
+                "To create an organization, click New Org from your profile menu. Fill in your details, submit for verification, and our team will review within 24 hours.",
+                events,
+            )
         if any(t in tokens for t in ("member", "team", "invite", "add")):
-            return "org_members", "You can invite team members from Org Settings. Members can have Owner, Admin, Manager, or Member roles with different permission levels.", events
-        return "org", "Your organisation workspace gives you access to event management, member management, analytics, finance, and venue booking tools.", events
+            return (
+                "org_members",
+                "You can invite team members from Org Settings. Members can have Owner, Admin, Manager, or Member roles with different permission levels.",
+                events,
+            )
+        return (
+            "org",
+            "Your organization workspace gives you access to event management, member management, analytics, finance, and venue booking tools.",
+            events,
+        )
 
     # analytics
     if any(t in tokens for t in ("analytics", "report", "stats", "statistics", "data", "insight")):
-        return "analytics", "Analytics are available per-event and at the platform level. View registrations, check-in rates, revenue breakdown, and attendee demographics from the Analytics section.", events
+        return (
+            "analytics",
+            "Analytics are available per-event and at the platform level. View registrations, check-in rates, revenue breakdown, and attendee demographics from the Analytics section.",
+            events,
+        )
 
     # search
     if any(t in tokens for t in ("search", "discover", "explore")):
-        return "search", "Use the Search page for natural-language queries powered by our NLP engine. Try queries like 'networking events this weekend' or 'volunteer at a music festival'.", events
+        return (
+            "search",
+            "Use the Search page for natural-language queries powered by our NLP engine. Try queries like 'networking events this weekend' or 'volunteer at a music festival'.",
+            events,
+        )
 
     # help / about
     if any(t in tokens for t in ("help", "support", "contact", "about", "sansaar", "platform", "what")):
-        return "help", "Sansaar is a multi-service event management platform. I can help with: finding events, registration, volunteering, payments, and organisation management. What would you like help with?", events
+        return (
+            "help",
+            "Sansaar is a multi-service event management platform. I can help with: finding events, registration, volunteering, payments, and organization management. What would you like help with?",
+            events,
+        )
 
     # farewell
     if any(t in tokens for t in ("bye", "goodbye", "thanks", "thank", "great", "ok", "okay", "cool")):
@@ -794,6 +883,66 @@ def _classify_and_reply(
     # fallback - suggest events if available
     if available_events:
         events = available_events[:4]
-        return "unknown", f"I am not sure about '{message}', but here are some events you might be interested in. Ask me about registration, volunteering, or payments and I will help!", events
+        return (
+            "unknown",
+            f"I am not sure about '{message}', but here are some events you might be interested in. Ask me about registration, volunteering, or payments and I will help!",
+            events,
+        )
 
-    return "unknown", f"I am not sure I understood '{message}'. I can help with events, registration, volunteering, payments, or organisation management. Could you rephrase?", events
+    return (
+        "unknown",
+        f"I am not sure I understood '{message}'. I can help with events, registration, volunteering, payments, or organization management. Could you rephrase?",
+        events,
+    )
+
+
+# * health ping history views
+
+
+class HealthHistoryView(APIView):
+    """GET /health-history/ - return stored health pings for the dashboard."""
+
+    authentication_classes: list = []
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=["Health History"],
+        summary="Get health ping history",
+        parameters=[
+            inline_serializer(
+                "HealthHistoryParams",
+                fields={
+                    "service": serializers.CharField(required=False),
+                    "days": serializers.IntegerField(required=False, default=30),
+                },
+            ),
+        ],
+        responses={200: OpenApiResponse(description="List of health pings.", response=_PING_RESP_SER(many=True))},
+    )
+    def get(self, request: Request) -> Response:
+        """Return health ping records filtered by service and time window."""
+        from datetime import datetime, timedelta, timezone
+
+        service = request.query_params.get("service")
+        days = int(request.query_params.get("days", "30"))
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+
+        pings = _PING_HISTORY_UC(_PING_REPO()).execute(service_name=service, since=since)
+        return success_response(_PING_RESP_SER(pings, many=True).data, request=request)
+
+
+class HealthHistoryLatestView(APIView):
+    """GET /health-history/latest/ - return most recent ping round."""
+
+    authentication_classes: list = []
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=["Health History"],
+        summary="Get latest health check round",
+        responses={200: OpenApiResponse(description="Latest ping per service.", response=_PING_RESP_SER(many=True))},
+    )
+    def get(self, request: Request) -> Response:
+        """Return the most recent ping for every service."""
+        pings = _PING_LATEST_UC(_PING_REPO()).execute()
+        return success_response(_PING_RESP_SER(pings, many=True).data, request=request)

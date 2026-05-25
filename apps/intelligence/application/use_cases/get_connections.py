@@ -50,9 +50,7 @@ class GetConnectionsUseCase:
 
         return sorted(existing, key=lambda m: m.match_score, reverse=True)[:limit]
 
-    def _compute_and_store_matches(
-        self, event_id: uuid.UUID, user_id: uuid.UUID
-    ) -> list[AttendeeMatchEntity]:
+    def _compute_and_store_matches(self, event_id: uuid.UUID, user_id: uuid.UUID) -> list[AttendeeMatchEntity]:
         """
         Score every opted-in co-attendee using Jaccard similarity on past events.
 
@@ -62,9 +60,7 @@ class GetConnectionsUseCase:
         import uuid as _uuid
         from datetime import datetime, timezone
 
-        other_users = [
-            uid for uid in self._matches.list_user_ids_for_event(event_id) if uid != user_id
-        ]
+        other_users = [uid for uid in self._matches.list_user_ids_for_event(event_id) if uid != user_id]
 
         user_events = set(self._analytics.get_event_ids_for_user(user_id))
         new_matches = []
@@ -100,12 +96,6 @@ class GetConnectionsUseCase:
             new_matches.append(match)
 
         if new_matches:
-            self._matches.bulk_create(
-                [
-                    m
-                    for m in new_matches
-                    if not self._matches.get_pair(event_id, user_id, m.user_id_b)
-                ]
-            )
+            self._matches.bulk_create([m for m in new_matches if not self._matches.get_pair(event_id, user_id, m.user_id_b)])
 
         return new_matches

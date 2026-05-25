@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import uuid
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from apps.intelligence.domain.entities import (
     AnalyticsEventEntity,
     AttendeeMatchEntity,
     ConnectionPrivacyEntity,
+    HealthPingEntity,
     HealthScoreEntity,
 )
 
@@ -27,14 +29,10 @@ class IAttendeeMatchRepository(ABC):
     """Persistence contract for attendee match records."""
 
     @abstractmethod
-    def get_matches_for_user(
-        self, event_id: uuid.UUID, user_id: uuid.UUID
-    ) -> list[AttendeeMatchEntity]: ...
+    def get_matches_for_user(self, event_id: uuid.UUID, user_id: uuid.UUID) -> list[AttendeeMatchEntity]: ...
 
     @abstractmethod
-    def get_pair(
-        self, event_id: uuid.UUID, user_id_a: uuid.UUID, user_id_b: uuid.UUID
-    ) -> AttendeeMatchEntity | None: ...
+    def get_pair(self, event_id: uuid.UUID, user_id_a: uuid.UUID, user_id_b: uuid.UUID) -> AttendeeMatchEntity | None: ...
 
     @abstractmethod
     def bulk_create(self, entities: list[AttendeeMatchEntity]) -> None: ...
@@ -71,3 +69,24 @@ class IHealthScoreRepository(ABC):
 
     @abstractmethod
     def get_latest_by_event(self, event_id: uuid.UUID) -> HealthScoreEntity: ...
+
+
+class IHealthPingRepository(ABC):
+    """Persistence contract for service health ping records."""
+
+    @abstractmethod
+    def bulk_create(self, entities: list[HealthPingEntity]) -> int: ...
+
+    @abstractmethod
+    def get_history(
+        self,
+        *,
+        service_name: str | None = None,
+        since: datetime | None = None,
+    ) -> list[HealthPingEntity]: ...
+
+    @abstractmethod
+    def get_latest_round(self) -> list[HealthPingEntity]: ...
+
+    @abstractmethod
+    def delete_older_than(self, cutoff: datetime) -> int: ...
