@@ -423,7 +423,7 @@ _NLP_NO_TEXT = ("ERR_NLP_NO_TEXT", "text is required.")
 
 
 class NLPSentimentView(APIView):
-    """Analyse sentiment of a text passage."""
+    """Analyze sentiment of a text passage."""
 
     permission_classes = [IsAuthenticated]
 
@@ -801,7 +801,7 @@ def _classify_and_reply(
         if any(t in tokens for t in ("cancel", "refund", "withdraw")):
             return (
                 "registration_cancel",
-                "To cancel a registration, go to My Tickets, find the event, and click Cancel. Refund policies depend on the organiser. You can request a refund from the Finance section.",
+                "To cancel a registration, go to My Tickets, find the event, and click Cancel. Refund policies depend on the organizer. You can request a refund from the Finance section.",
                 events,
             )
         if any(t in tokens for t in ("qr", "code", "scan", "check")):
@@ -824,7 +824,7 @@ def _classify_and_reply(
         if any(t in tokens for t in ("apply", "application", "how", "sign")):
             return (
                 "volunteer_apply",
-                "Browse volunteer roles under the Volunteer section. Click Apply on any role that interests you and leave a short message. The organiser will approve or reject your application.",
+                "Browse volunteer roles under the Volunteer section. Click Apply on any role that interests you and leave a short message. The organizer will approve or reject your application.",
                 events,
             )
         return (
@@ -972,9 +972,20 @@ class HealthHistoryLatestView(APIView):
 
 
 class GenerateReportView(APIView):
-    """POST /reports/ - create a new async report job."""
+    """GET /reports/ - list jobs; POST /reports/ - create a new async report job."""
 
-    permission_classes = [_IS_ORG_MEMBER]
+    permission_classes = [_IS_AUTH]
+
+    @extend_schema(
+        tags=["Reports"],
+        summary="List report jobs",
+        description="Returns all report jobs for the authenticated user, newest first.",
+        responses={200: OpenApiResponse(description="Report jobs.", response=ReportJobResponseSerializer(many=True))},
+    )
+    def get(self, request: Request) -> Response:
+        """Return all report jobs for the current user."""
+        jobs = _REPORT_REPO().list_by_user(request.user.id)
+        return success_response(_REPORT_JOB_SER(jobs, many=True).data, request=request)
 
     @extend_schema(
         tags=["Reports"],
@@ -1008,7 +1019,7 @@ class GenerateReportView(APIView):
 class PollReportJobView(APIView):
     """GET /reports/<job_id>/ - poll status of an existing report job."""
 
-    permission_classes = [_IS_ORG_MEMBER]
+    permission_classes = [_IS_AUTH]
 
     @extend_schema(
         tags=["Reports"],
@@ -1030,7 +1041,7 @@ class PollReportJobView(APIView):
 class ReportDownloadView(APIView):
     """GET /reports/<job_id>/download/ - get a presigned download URL."""
 
-    permission_classes = [_IS_ORG_MEMBER]
+    permission_classes = [_IS_AUTH]
 
     @extend_schema(
         tags=["Reports"],

@@ -115,7 +115,7 @@ RABBITMQ_URL = config("RABBITMQ_URL", default="amqp://guest:guest@localhost:5672
 # * minio / s3 storage
 MINIO_ENDPOINT = config("MINIO_ENDPOINT", default="minio:9000")
 MINIO_ACCESS_KEY = config("MINIO_ACCESS_KEY", default="sansaar")
-MINIO_SECRET_KEY = config("MINIO_SECRET_KEY", default="sansaar_secret")
+MINIO_SECRET_KEY = config("MINIO_SECRET_KEY", default="sansaar_secret_12345")
 MINIO_BUCKET = config("MINIO_BUCKET", default="sansaar-reports")
 MINIO_SECURE = config("MINIO_SECURE", default=False, cast=bool)
 

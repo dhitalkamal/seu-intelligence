@@ -109,25 +109,25 @@ class TestIsOrgMember:
 
     def test_denies_when_user_has_no_role_for_org(self):
         """User with no role for the requested org is denied."""
-        req = _make_request(org_roles={"99": "member"}, query_params={"organisation_id": "42"})
+        req = _make_request(org_roles={"99": "member"}, query_params={"organization_id": "42"})
         view = _make_view()
         assert self._perm().has_permission(req, view) is False
 
     def test_allows_member_role(self):
         """User with member role for the requested org is allowed."""
-        req = _make_request(org_roles={"42": "member"}, query_params={"organisation_id": "42"})
+        req = _make_request(org_roles={"42": "member"}, query_params={"organization_id": "42"})
         view = _make_view()
         assert self._perm().has_permission(req, view) is True
 
     def test_allows_admin_role(self):
         """Admin role satisfies IsOrgMember."""
-        req = _make_request(org_roles={"42": "admin"}, query_params={"organisation_id": "42"})
+        req = _make_request(org_roles={"42": "admin"}, query_params={"organization_id": "42"})
         view = _make_view()
         assert self._perm().has_permission(req, view) is True
 
     def test_allows_owner_role(self):
         """Owner role satisfies IsOrgMember."""
-        req = _make_request(org_roles={"42": "owner"}, query_params={"organisation_id": "42"})
+        req = _make_request(org_roles={"42": "owner"}, query_params={"organization_id": "42"})
         view = _make_view()
         assert self._perm().has_permission(req, view) is True
 
@@ -139,7 +139,7 @@ class TestIsOrgMember:
 
     def test_org_id_from_request_data(self):
         """org_id falls back to request.data when not in params."""
-        req = _make_request(org_roles={"5": "manager"}, data={"organisation_id": "5"})
+        req = _make_request(org_roles={"5": "manager"}, data={"organization_id": "5"})
         view = _make_view()
         assert self._perm().has_permission(req, view) is True
 
@@ -154,12 +154,12 @@ class TestIsOrgOwner:
 
     def test_allows_owner(self):
         """Owner role is allowed."""
-        req = _make_request(org_roles={"1": "owner"}, query_params={"organisation_id": "1"})
+        req = _make_request(org_roles={"1": "owner"}, query_params={"organization_id": "1"})
         assert self._perm().has_permission(req, _make_view()) is True
 
     def test_rejects_member(self):
         """Member role is rejected by IsOrgOwner."""
-        req = _make_request(org_roles={"1": "member"}, query_params={"organisation_id": "1"})
+        req = _make_request(org_roles={"1": "member"}, query_params={"organization_id": "1"})
         assert self._perm().has_permission(req, _make_view()) is False
 
 
@@ -173,12 +173,12 @@ class TestIsOrgAdmin:
 
     def test_allows_admin(self):
         """Admin role is allowed."""
-        req = _make_request(org_roles={"3": "admin"}, query_params={"organisation_id": "3"})
+        req = _make_request(org_roles={"3": "admin"}, query_params={"organization_id": "3"})
         assert self._perm().has_permission(req, _make_view()) is True
 
     def test_rejects_manager(self):
         """Manager role is rejected by IsOrgAdmin."""
-        req = _make_request(org_roles={"3": "manager"}, query_params={"organisation_id": "3"})
+        req = _make_request(org_roles={"3": "manager"}, query_params={"organization_id": "3"})
         assert self._perm().has_permission(req, _make_view()) is False
 
 
@@ -192,10 +192,10 @@ class TestIsOrgManager:
 
     def test_allows_manager(self):
         """Manager role is allowed."""
-        req = _make_request(org_roles={"8": "manager"}, query_params={"organisation_id": "8"})
+        req = _make_request(org_roles={"8": "manager"}, query_params={"organization_id": "8"})
         assert self._perm().has_permission(req, _make_view()) is True
 
     def test_rejects_member(self):
         """Member role is rejected by IsOrgManager."""
-        req = _make_request(org_roles={"8": "member"}, query_params={"organisation_id": "8"})
+        req = _make_request(org_roles={"8": "member"}, query_params={"organization_id": "8"})
         assert self._perm().has_permission(req, _make_view()) is False

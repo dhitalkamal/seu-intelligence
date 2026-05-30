@@ -45,9 +45,9 @@ class IsOrgRole(BasePermission):
         return (
             getattr(view, "org_id", None)
             or (view.kwargs.get("org_id") if hasattr(view, "kwargs") else None)
-            or (view.kwargs.get("organisation_id") if hasattr(view, "kwargs") else None)
-            or request.data.get("organisation_id")
-            or request.query_params.get("organisation_id")
+            or (view.kwargs.get("organization_id") if hasattr(view, "kwargs") else None)
+            or request.data.get("organization_id")
+            or request.query_params.get("organization_id")
         )
 
     def _get_org_roles(self, request: Request) -> dict[str, str]:

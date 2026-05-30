@@ -213,6 +213,10 @@ class DjangoReportJobRepository(IReportJobRepository):
         )
         return entity
 
+    def list_by_user(self, user_id: uuid.UUID) -> list[ReportJobEntity]:
+        """Return all report jobs requested by the user, newest first."""
+        return [obj.to_entity() for obj in ReportJob.objects.filter(requested_by=user_id).order_by("-created_at")]
+
 
 class DjangoAnalyticsGrowthRepository(IAnalyticsGrowthRepository):
     """Aggregates analytics events into daily registration and revenue buckets."""
