@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Django command-line utility for administrative tasks."""
+
 from __future__ import annotations
 
 import os

@@ -1,4 +1,5 @@
 """Middleware that stamps every request with a unique ID."""
+
 from __future__ import annotations
 
 import uuid

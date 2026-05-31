@@ -1,4 +1,5 @@
 """Django app config for the intelligence module."""
+
 from __future__ import annotations
 
 from django.apps import AppConfig

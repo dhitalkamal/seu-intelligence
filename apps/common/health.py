@@ -1,4 +1,5 @@
 """Dependency health checks for PostgreSQL, Redis, and RabbitMQ."""
+
 from __future__ import annotations
 
 import pika
