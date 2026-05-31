@@ -5,10 +5,12 @@ from __future__ import annotations
 from django.urls import URLPattern, path
 
 from .views import (
+    AttendancePredictionView,
     ChatbotView,
     ConnectionPrivacyView,
     ConnectionsView,
     GenerateReportView,
+    GrowthAnalyticsView,
     HealthCheckView,
     HealthHistoryLatestView,
     HealthHistoryView,
@@ -25,6 +27,9 @@ from .views import (
     NLPSimilarityView,
     PollReportJobView,
     ReportDownloadView,
+    ScheduledReportCreateView,
+    ScheduledReportDeactivateView,
+    ScheduledReportListView,
 )
 
 urlpatterns: list[URLPattern] = [
@@ -64,4 +69,31 @@ urlpatterns: list[URLPattern] = [
     path("reports/", GenerateReportView.as_view(), name="report-generate"),
     path("reports/<uuid:job_id>/", PollReportJobView.as_view(), name="report-poll"),
     path("reports/<uuid:job_id>/download/", ReportDownloadView.as_view(), name="report-download"),
+    # growth analytics and attendance prediction
+    path(
+        "events/<uuid:event_id>/analytics/growth/",
+        GrowthAnalyticsView.as_view(),
+        name="event-growth-analytics",
+    ),
+    path(
+        "events/<uuid:event_id>/analytics/predictions/",
+        AttendancePredictionView.as_view(),
+        name="event-attendance-prediction",
+    ),
+    # scheduled reports
+    path(
+        "events/<uuid:event_id>/reports/schedules/",
+        ScheduledReportCreateView.as_view(),
+        name="scheduled-report-create",
+    ),
+    path(
+        "events/<uuid:event_id>/reports/schedules/list/",
+        ScheduledReportListView.as_view(),
+        name="scheduled-report-list",
+    ),
+    path(
+        "reports/schedules/<uuid:schedule_id>/",
+        ScheduledReportDeactivateView.as_view(),
+        name="scheduled-report-deactivate",
+    ),
 ]
