@@ -728,50 +728,155 @@ def _filter_events(events: list[dict], tokens: list[str], want_free: bool | None
     return top if top else [e for _, e in scored[:5]]
 
 
+def _last_assistant_intent(history: list[dict]) -> str | None:
+    """Extract the intent from the most recent assistant message if present."""
+    for msg in reversed(history):
+        if msg.get("role") == "assistant":
+            intent = msg.get("intent")
+            if intent:
+                return str(intent)
+            break
+    return None
+
+
+# expanded synonym sets for broader intent detection
+_GREETING_WORDS = frozenset({"hi", "hello", "hey", "namaste", "greetings", "hola", "sup", "yo", "howdy", "hii", "hiii"})
+_EVENT_WORDS = frozenset(
+    {
+        "event",
+        "events",
+        "happening",
+        "upcoming",
+        "conference",
+        "workshop",
+        "seminar",
+        "webinar",
+        "festival",
+        "recommend",
+        "suggest",
+        "select",
+        "show",
+        "list",
+        "find",
+        "looking",
+        "interested",
+        "browse",
+        "explore",
+        "discover",
+        "whats",
+        "what's",
+        "schedule",
+        "programme",
+        "program",
+        "meetup",
+        "hackathon",
+        "summit",
+        "gala",
+        "lecture",
+        "class",
+        "course",
+        "training",
+        "bootcamp",
+        "expo",
+        "fair",
+        "concert",
+    }
+)
+_CREATE_WORDS = frozenset({"create", "publish", "new", "organise", "organize", "host", "setup", "make", "build", "start"})
+_REGISTER_WORDS = frozenset(
+    {"register", "registration", "ticket", "sign", "enrol", "enroll", "book", "attend", "join", "signup", "rsvp", "reserve"}
+)
+_CANCEL_WORDS = frozenset({"cancel", "refund", "withdraw", "unregister", "undo"})
+_QR_WORDS = frozenset({"qr", "code", "scan", "check", "checkin", "check-in", "barcode"})
+_VOLUNTEER_WORDS = frozenset({"volunteer", "volunteering", "shift", "assist", "crew", "staff"})
+_APPLY_WORDS = frozenset({"apply", "application", "how", "sign", "signup"})
+_PAY_WORDS = frozenset(
+    {
+        "pay",
+        "payment",
+        "price",
+        "cost",
+        "fee",
+        "refund",
+        "invoice",
+        "billing",
+        "subscription",
+        "plan",
+        "upgrade",
+        "khalti",
+        "esewa",
+        "stripe",
+        "paypal",
+        "money",
+    }
+)
+_REFUND_WORDS = frozenset({"refund", "money", "back", "return", "reimburse"})
+_PLAN_WORDS = frozenset({"plan", "upgrade", "starter", "pro", "enterprise", "ngo", "pricing", "tier", "tiers"})
+_ORG_WORDS = frozenset({"org", "organization", "organisation", "workspace", "team", "member", "company"})
+_ANALYTICS_WORDS = frozenset({"analytics", "report", "stats", "statistics", "data", "insight", "dashboard", "metrics", "numbers", "kpi"})
+_SEARCH_WORDS = frozenset({"search", "discover", "explore", "lookup", "look"})
+_HELP_WORDS = frozenset({"help", "support", "contact", "about", "sansaar", "platform", "what", "how", "guide", "tutorial", "faq"})
+_FAREWELL_WORDS = frozenset({"bye", "goodbye", "thanks", "thank", "great", "ok", "okay", "cool", "cheers", "ciao", "later", "nice"})
+_NETWORKING_WORDS = frozenset({"networking", "network", "connect", "connections", "meet", "match", "matches", "people", "who"})
+
+
+def _has(tokens: list[str], words: frozenset[str]) -> bool:
+    """Check if any token is in the word set."""
+    return any(t in words for t in tokens)
+
+
 def _classify_and_reply(
     message: str,
     tokens: list[str],
     history: list[dict],
     available_events: list[dict] | None = None,
 ) -> tuple[str, str, list[dict]]:
-    """Map tokens to an intent bucket and return (intent, reply, events) triple."""
+    """Map tokens to an intent bucket and return (intent, reply, events) triple.
+
+    Uses conversation history to resolve follow-up messages like
+    'show me more' or 'yes' by carrying forward the prior intent.
+    """
     events: list[dict] = []
     if available_events is None:
         available_events = []
 
+    # follow-up detection: if the user says something short and affirmative,
+    # carry over the last assistant intent so context isn't lost
+    followup_words = {"more", "yes", "yeah", "yep", "sure", "another", "again", "next", "else", "other", "continue"}
+    if len(tokens) <= 3 and _has(tokens, followup_words):
+        prev_intent = _last_assistant_intent(history)
+        if prev_intent == "event_recommend" and available_events:
+            events = _filter_events(available_events, tokens)
+            if not events:
+                events = available_events[:5]
+            return "event_recommend", f"Here are {len(events)} more events you might like.", events
+        if prev_intent == "registration":
+            return (
+                "registration",
+                "Open the event page and click Register. For free events it is instant, for paid events you will be directed to checkout. Need help with a specific event?",
+                events,
+            )
+
     # greeting
-    if any(t in tokens for t in ("hi", "hello", "hey", "namaste", "greetings", "hola")):
+    if _has(tokens, _GREETING_WORDS):
         return (
             "greeting",
             "Namaste! I am Sansaar's assistant. I can help you find events, manage registration, learn about volunteering, or answer payment questions. What would you like to know?",
             events,
         )
 
-    # event discovery - recommend real events when available
-    is_event_intent = any(
-        t in tokens
-        for t in (
-            "event",
-            "events",
-            "happening",
-            "upcoming",
-            "conference",
-            "workshop",
-            "seminar",
-            "webinar",
-            "festival",
-            "recommend",
-            "suggest",
-            "select",
-            "show",
-            "list",
-            "find",
-            "looking",
-            "interested",
+    # networking / who to meet
+    if _has(tokens, _NETWORKING_WORDS):
+        return (
+            "networking",
+            "The Who to Meet feature uses an NLP matching engine to pair you with relevant attendees. Enable networking when you register for an event, then visit the Connections page to see your matches and send introductions.",
+            events,
         )
-    )
+
+    # event discovery
+    is_event_intent = _has(tokens, _EVENT_WORDS)
     if is_event_intent:
-        if any(t in tokens for t in ("create", "publish", "new", "organise", "organize", "host")):
+        if _has(tokens, _CREATE_WORDS):
             return (
                 "event_create",
                 "To create an event, go to your Org Dashboard and click New Event. Fill in the details, add a cover image, set the date and location, then publish when ready.",
@@ -779,9 +884,9 @@ def _classify_and_reply(
             )
 
         want_free: bool | None = None
-        if any(t in tokens for t in ("free", "no cost")):
+        if any(t in tokens for t in ("free", "no cost", "gratis", "complimentary")):
             want_free = True
-        elif any(t in tokens for t in ("paid", "ticket", "priced")):
+        elif any(t in tokens for t in ("paid", "ticket", "priced", "premium")):
             want_free = False
 
         if available_events:
@@ -789,39 +894,43 @@ def _classify_and_reply(
             if events:
                 count = len(events)
                 qualifier = "free " if want_free else ""
-                reply = f"Here are {count} {qualifier}event{'s' if count != 1 else ''} that match your query. Click any to open the event page and register."
-                return "event_recommend", reply, events
+                return (
+                    "event_recommend",
+                    f"Here are {count} {qualifier}event{'s' if count != 1 else ''} that match your query. Click any to open the event page and register.",
+                    events,
+                )
 
-        # no events in context
-        reply = "Browse all upcoming events on the Events page. Use the search bar for natural-language queries like 'free tech events in Kathmandu' or filter by category and date."
-        return "event_discover", reply, events
+        return (
+            "event_discover",
+            "Browse all upcoming events on the Events page. Use the search bar for natural-language queries like 'free tech events in Kathmandu' or filter by category and date.",
+            events,
+        )
 
     # registration
-    if any(t in tokens for t in ("register", "registration", "ticket", "sign", "enrol", "enroll", "book", "attend", "join")):
-        if any(t in tokens for t in ("cancel", "refund", "withdraw")):
+    if _has(tokens, _REGISTER_WORDS):
+        if _has(tokens, _CANCEL_WORDS):
             return (
                 "registration_cancel",
                 "To cancel a registration, go to My Tickets, find the event, and click Cancel. Refund policies depend on the organizer. You can request a refund from the Finance section.",
                 events,
             )
-        if any(t in tokens for t in ("qr", "code", "scan", "check")):
+        if _has(tokens, _QR_WORDS):
             return (
                 "registration_qr",
                 "Your QR code is on your ticket in My Tickets. Show it to event staff for check-in. It refreshes every 4 minutes for security.",
                 events,
             )
-        # if registering and events are available, show relevant ones
         if available_events:
             events = _filter_events(available_events, tokens)[:3]
         return (
             "registration",
-            "To register for an event, open the event page and click Register. For free events it is instant. For paid events you will be directed to checkout.",
+            "To register for an event, open the event page and click Register. For free events it is instant. For paid events you will be directed to checkout. You can also enable networking to get matched with attendees.",
             events,
         )
 
     # volunteer
-    if any(t in tokens for t in ("volunteer", "volunteering", "shift", "help", "assist")):
-        if any(t in tokens for t in ("apply", "application", "how", "sign")):
+    if _has(tokens, _VOLUNTEER_WORDS):
+        if _has(tokens, _APPLY_WORDS):
             return (
                 "volunteer_apply",
                 "Browse volunteer roles under the Volunteer section. Click Apply on any role that interests you and leave a short message. The organizer will approve or reject your application.",
@@ -834,30 +943,28 @@ def _classify_and_reply(
         )
 
     # payment
-    if any(
-        t in tokens for t in ("pay", "payment", "price", "cost", "fee", "refund", "invoice", "billing", "subscription", "plan", "upgrade")
-    ):
-        if any(t in tokens for t in ("refund", "money", "back", "return")):
+    if _has(tokens, _PAY_WORDS):
+        if _has(tokens, _REFUND_WORDS):
             return (
                 "payment_refund",
                 "To request a refund, go to Finance > My Orders, open the order, and click Request Refund. Refunds are processed within 5-7 business days depending on your gateway.",
                 events,
             )
-        if any(t in tokens for t in ("plan", "upgrade", "starter", "pro", "enterprise", "ngo")):
+        if _has(tokens, _PLAN_WORDS):
             return (
                 "payment_plans",
-                "Sansaar offers Free, Starter (NPR 999/mo), Pro (NPR 4,999/mo), NGO (free), and Enterprise (NPR 14,999/mo) plans. Higher plans reduce platform fees and unlock advanced features.",
+                "Sansaar offers Free, Starter (NPR 999/mo), Pro (NPR 4,999/mo), NGO (free), and Enterprise (NPR 14,999/mo) plans. Higher plans reduce platform fees and unlock advanced features like analytics and custom branding.",
                 events,
             )
         return (
             "payment",
-            "Payments are handled via Khalti and eSewa for NPR transactions. Go to Finance > Billing to manage your subscription or view past orders.",
+            "Payments are handled via Khalti and eSewa for NPR, and Stripe/PayPal for international transactions. Go to Finance > Billing to manage your subscription or view past orders.",
             events,
         )
 
     # organization
-    if any(t in tokens for t in ("org", "organization", "organization", "workspace", "team", "member")):
-        if any(t in tokens for t in ("create", "new", "start", "setup")):
+    if _has(tokens, _ORG_WORDS):
+        if _has(tokens, _CREATE_WORDS):
             return (
                 "org_create",
                 "To create an organization, click New Org from your profile menu. Fill in your details, submit for verification, and our team will review within 24 hours.",
@@ -866,7 +973,7 @@ def _classify_and_reply(
         if any(t in tokens for t in ("member", "team", "invite", "add")):
             return (
                 "org_members",
-                "You can invite team members from Org Settings. Members can have Owner, Admin, Manager, or Member roles with different permission levels.",
+                "You can invite team members from the Team page using their email address. Members can have Owner, Admin, Manager, or Member roles with different permission levels.",
                 events,
             )
         return (
@@ -876,7 +983,7 @@ def _classify_and_reply(
         )
 
     # analytics
-    if any(t in tokens for t in ("analytics", "report", "stats", "statistics", "data", "insight")):
+    if _has(tokens, _ANALYTICS_WORDS):
         return (
             "analytics",
             "Analytics are available per-event and at the platform level. View registrations, check-in rates, revenue breakdown, and attendee demographics from the Analytics section.",
@@ -884,27 +991,34 @@ def _classify_and_reply(
         )
 
     # search
-    if any(t in tokens for t in ("search", "discover", "explore")):
+    if _has(tokens, _SEARCH_WORDS):
         return (
             "search",
-            "Use the Search page for natural-language queries powered by our NLP engine. Try queries like 'networking events this weekend' or 'volunteer at a music festival'.",
+            "Use the Search page for natural-language queries powered by our NLP engine. Try queries like 'networking events this weekend' or 'volunteer at a music festival'. The engine supports both English and Nepali.",
             events,
         )
 
     # help / about
-    if any(t in tokens for t in ("help", "support", "contact", "about", "sansaar", "platform", "what")):
+    if _has(tokens, _HELP_WORDS):
         return (
             "help",
-            "Sansaar is a multi-service event management platform. I can help with: finding events, registration, volunteering, payments, and organization management. What would you like help with?",
+            "Sansaar is a multi-service event management platform. I can help with:\n- Finding and registering for events\n- Volunteering and shift management\n- Payments, refunds, and subscriptions\n- Organization and team management\n- Networking and connections\nWhat would you like help with?",
             events,
         )
 
     # farewell
-    if any(t in tokens for t in ("bye", "goodbye", "thanks", "thank", "great", "ok", "okay", "cool")):
+    if _has(tokens, _FAREWELL_WORDS):
         return "farewell", "You are welcome! Feel free to ask anything else about Sansaar. Have a great day!", events
 
-    # fallback - suggest events if available
+    # fallback - try to match events even when no intent was detected
     if available_events:
+        events = _filter_events(available_events, tokens)
+        if events and any(_score_event(e, tokens) > 0 for e in events):
+            return (
+                "event_recommend",
+                f"I found {len(events)} event{'s' if len(events) != 1 else ''} that might match what you are looking for.",
+                events,
+            )
         events = available_events[:4]
         return (
             "unknown",
@@ -914,7 +1028,7 @@ def _classify_and_reply(
 
     return (
         "unknown",
-        f"I am not sure I understood '{message}'. I can help with events, registration, volunteering, payments, or organization management. Could you rephrase?",
+        f"I am not sure I understood '{message}'. I can help with events, registration, volunteering, payments, networking, or organization management. Could you rephrase?",
         events,
     )
 
